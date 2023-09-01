@@ -12,19 +12,29 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import inspect
+import math
 import os
 import time
+import typing
 import warnings
 from typing import Callable, List, Optional, Union
 
 import datasets
+import numpy as np
 import torch
+import torch.nn.functional as F
 from accelerate import Accelerator
+from accelerate.utils import ProjectConfiguration
 from datasets import Dataset
 from huggingface_hub import whoami
 from packaging import version
 from torch.optim import Adam
-from transformers import DataCollatorForLanguageModeling, PreTrainedTokenizer, PreTrainedTokenizerFast
+from transformers import (
+    DataCollatorForLanguageModeling,
+    PreTrainedTokenizer,
+    PreTrainedTokenizerBase,
+    PreTrainedTokenizerFast,
+)
 
 from ..core import (
     WANDB_PADDING,
@@ -43,7 +53,7 @@ from ..core import (
 )
 from ..import_utils import is_torch_greater_2_0
 from ..models import SUPPORTED_ARCHITECTURES, PreTrainedModelWrapper, create_reference_model
-from . import AdaptiveKLController, BaseTrainer, FixedKLController, PPOConfig
+from . import AdaptiveKLController, BaseTrainer, FixedKLController, PPOConfig, RunningMoments
 
 
 MODEL_CARD_TEMPLATE = """---
@@ -56,7 +66,7 @@ tags:
 
 # {model_name}
 
-This is a [TRL language model](https://github.com/lvwerra/trl) that has been fine-tuned with reinforcement learning to
+This is a [TRL language model](https://github.com/huggingface/trl) that has been fine-tuned with reinforcement learning to
  guide the model outputs according to a value, function, or human feedback. The model can be used for text generation.
 
 ## Usage
@@ -106,7 +116,7 @@ class PPOTrainer(BaseTrainer):
             transformer model with a casual language modelling head. Check the documentation of `PreTrainedModelWrapper`
             for more details. If no reference model is provided, the trainer will create a reference model with the same
              architecture as the model to be optimized with shared layers.
-        **tokenizer** (`Union[PreTrainedTokenizer, PreTrainedTokenizerFast]`) -- Tokenizer to be used for encoding the
+        **tokenizer** (`PreTrainedTokenizerBase`) -- Tokenizer to be used for encoding the
             data. Check the documentation of `transformers.PreTrainedTokenizer` and
             `transformers.PreTrainedTokenizerFast` for more details.
         **dataset** (Union[`torch.utils.data.Dataset`, `datasets.Dataset`], *optional*) -- PyTorch dataset or Hugging
@@ -127,11 +137,11 @@ class PPOTrainer(BaseTrainer):
         self,
         config: PPOConfig = None,
         model: PreTrainedModelWrapper = None,
-        ref_model: PreTrainedModelWrapper = None,
-        tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast] = None,
+        ref_model: Optional[PreTrainedModelWrapper] = None,
+        tokenizer: PreTrainedTokenizerBase = None,
         dataset: Optional[Union[torch.utils.data.Dataset, Dataset]] = None,
         optimizer: Optional[torch.optim.Optimizer] = None,
-        data_collator=None,
+        data_collator: Optional[typing.Callable] = None,
         num_shared_layers: Optional[int] = None,
         lr_scheduler: Optional[torch.optim.lr_scheduler._LRScheduler] = None,
     ):
@@ -145,9 +155,9 @@ class PPOTrainer(BaseTrainer):
                 Hugging Face transformer model with a value head.
             ref_model (`PreTrainedModelWrapper`):
                 Hugging Face transformer model with a casual language modelling head. Used for KL penalty
-            tokenizer (`transformers.PreTrainedTokenizer`):
+            tokenizer (`transformers.PreTrainedTokenizerBase`):
                 Hugging Face tokenizer
-            dataset (Union[`torch.utils.data.Dataset`, `datasets.Dataset`], *optional*):
+            dataset (Optional[Union[`torch.utils.data.Dataset`, `datasets.Dataset`]]):
                 PyTorch dataset or Hugging Face dataset. If a Hugging Face dataset is passed, the dataset
                 will be preprocessed by removing the columns that are not used by the model. If none is passed,
                 a warning will be raised in a multi-GPU setting.
@@ -169,9 +179,9 @@ class PPOTrainer(BaseTrainer):
         # Step 0: check positional arguments validity
         if not isinstance(config, PPOConfig):
             raise ValueError(f"config must be a PPOConfig, got {type(config)}")
-        if not isinstance(tokenizer, (PreTrainedTokenizer, PreTrainedTokenizerFast)):
+        if not isinstance(tokenizer, (PreTrainedTokenizerBase)):
             raise ValueError(
-                f"tokenizer must be a PreTrainedTokenizer or PreTrainedTokenizerFast, got {type(tokenizer)}"
+                f"tokenizer must be a PreTrainedTokenizerBase like a PreTrainedTokenizer or a PreTrainedTokenizerFast, got {type(tokenizer)}"
             )
         if not isinstance(model, (SUPPORTED_ARCHITECTURES)):
             raise ValueError(
@@ -181,17 +191,23 @@ class PPOTrainer(BaseTrainer):
         self.accelerator = Accelerator(
             log_with=config.log_with,
             gradient_accumulation_steps=config.gradient_accumulation_steps,
+            project_config=ProjectConfiguration(**config.project_kwargs),
             **config.accelerator_kwargs,
         )
+
+        is_using_tensorboard = config.log_with is not None and config.log_with == "tensorboard"
+
         self.accelerator.init_trackers(
             config.tracker_project_name,
-            config=dict(trl_ppo_trainer_config=config.to_dict()),
+            config=dict(trl_ppo_trainer_config=config.to_dict()) if not is_using_tensorboard else config.to_dict(),
             init_kwargs=config.tracker_kwargs,
         )
 
         self.model = model
+        self.model_params = filter(lambda p: p.requires_grad, self.model.parameters())
         self.is_encoder_decoder = hasattr(self.model, "is_encoder_decoder")
         self.is_peft_model = getattr(self.model, "is_peft_model", False)
+        self.is_using_text_environment = getattr(config, "use_text_environment", False)
 
         if isinstance(ref_model, SUPPORTED_ARCHITECTURES):
             self.ref_model = ref_model
@@ -218,7 +234,7 @@ class PPOTrainer(BaseTrainer):
         self.tokenizer = tokenizer
 
         if dataset is not None and not (isinstance(dataset, torch.utils.data.Dataset) or isinstance(dataset, Dataset)):
-            raise ValueError("dataloader must be a torch.utils.data.Dataset or datasets.Dataset")
+            raise ValueError("dataset must be a torch.utils.data.Dataset or datasets.Dataset")
         elif dataset is None:
             warnings.warn(
                 "No dataset is provided. Make sure to set config.batch_size to the correct value before training.",
@@ -230,9 +246,9 @@ class PPOTrainer(BaseTrainer):
             self.dataloader = self.prepare_dataloader(self.dataset, data_collator)
         elif self.dataset is None and self.accelerator.num_processes > 1:
             warnings.warn(
-                "No dataset is provided. In a multi-GPU setting, this will lead to an error. You should",
-                " prepare your dataloader yourself with `dataloader = ppo_trainer.accelerator.prepare(dataloader)`",
-                " and using `torch.utils.data.DataLoader`, or pass a dataset to the `PPOTrainer`. Please ",
+                "No dataset is provided. In a multi-GPU setting, this will lead to an error. You should"
+                " prepare your dataloader yourself with `dataloader = ppo_trainer.accelerator.prepare(dataloader)`"
+                " and using `torch.utils.data.DataLoader`, or pass a dataset to the `PPOTrainer`. Please "
                 " refer to the documentation for more details.",
                 UserWarning,
             )
@@ -240,11 +256,14 @@ class PPOTrainer(BaseTrainer):
         else:
             self.dataloader = None
 
+        self.config.backward_batch_size = self.config.mini_batch_size * self.config.gradient_accumulation_steps
+
         # Step 3: Initialize optimizer and data collator
         self.data_collator = DataCollatorForLanguageModeling(self.tokenizer, mlm=False)
         if optimizer is None:
             self.optimizer = Adam(
-                filter(lambda p: p.requires_grad, self.model.parameters()), lr=self.config.learning_rate
+                filter(lambda p: p.requires_grad, self.model.parameters()),
+                lr=self.config.learning_rate,
             )
         else:
             self.optimizer = optimizer
@@ -279,13 +298,20 @@ class PPOTrainer(BaseTrainer):
             self.dataloader,
             self.lr_scheduler,
         ) = self.accelerator.prepare(
-            self.model, self.optimizer, self.data_collator, self.dataloader, self.lr_scheduler
+            self.model,
+            self.optimizer,
+            self.data_collator,
+            self.dataloader,
+            self.lr_scheduler,
         )
         if is_deepspeed_used:
             # 8 bit models are already set on the correct device
-            if not self.is_peft_model and not getattr(self.ref_model.pretrained_model, "is_loaded_in_8bit", False):
+            if not self.is_peft_model and not (
+                getattr(self.ref_model.pretrained_model, "is_loaded_in_8bit", False)
+                or getattr(self.ref_model.pretrained_model, "is_loaded_in_4bit", False)
+            ):
                 # DS integration only allows for single model and as `ref_model` is only used for
-                # `KL devergence loss`,i.e, in eval model, just have it be on the respective device and
+                # `KL divergence loss`,i.e, in eval model, just have it be on the respective device and
                 # there is no need to pass it to the `accelerator.prepare` call
                 self.ref_model = self.ref_model.to(self.accelerator.device)
 
@@ -318,6 +344,8 @@ class PPOTrainer(BaseTrainer):
             self.current_device = torch.device("cuda:0")
 
         PPODecorators.optimize_cuda_cache = self.config.optimize_cuda_cache
+
+        self.running = RunningMoments(self.accelerator)
 
     def _filter_kwargs(self, kwargs, target_func):
         """
@@ -363,7 +391,7 @@ class PPOTrainer(BaseTrainer):
             signature = inspect.signature(self.model.forward)
             self._signature_columns = list(signature.parameters.keys())
             # label => sentiment | we need query and response for logging purpose
-            self._signature_columns += list(set(["label", "query", "response"]))
+            self._signature_columns += ["label", "query", "response"]
 
     # Adapted from transformers.Trainer._remove_unused_columns
     def _remove_unused_columns(self, dataset: "Dataset"):
@@ -378,7 +406,9 @@ class PPOTrainer(BaseTrainer):
 
         if version.parse(datasets.__version__) < version.parse("1.4.0"):
             dataset.set_format(
-                type=dataset.format["type"], columns=columns, format_kwargs=dataset.format["format_kwargs"]
+                type=dataset.format["type"],
+                columns=columns,
+                format_kwargs=dataset.format["format_kwargs"],
             )
             return dataset
         else:
@@ -439,6 +469,7 @@ class PPOTrainer(BaseTrainer):
         batch_size: int = 4,
         return_prompt: bool = True,
         pad_to_multiple_of: int = None,
+        remove_padding: bool = True,
         **generation_kwargs,
     ):
         outputs = []
@@ -479,6 +510,12 @@ class PPOTrainer(BaseTrainer):
 
                 if not return_prompt and not self.is_encoder_decoder:
                     output = output[(mask).sum() :]  # remove prompt
+
+                if remove_padding and self.tokenizer.eos_token_id in output:
+                    pad_mask = output == self.tokenizer.eos_token_id
+                    pad_start = torch.nonzero(pad_mask, as_tuple=False)[0, 0].item()
+                    output = output[: pad_start + 1]  # keep the eos token at the end
+
                 outputs.append(output)
 
         self.tokenizer.padding_side = padding_side_default
@@ -490,6 +527,7 @@ class PPOTrainer(BaseTrainer):
         queries: List[torch.LongTensor],
         responses: List[torch.LongTensor],
         scores: List[torch.FloatTensor],
+        masks: Optional[List[torch.LongTensor]] = None,
     ):
         """
         Check if the input data is valid for training.
@@ -503,6 +541,8 @@ class PPOTrainer(BaseTrainer):
                 List of tensors containing the encoded responses of shape (`response_length`)
             scores (List[`torch.FloatTensor`]):
                 List of tensors containing the scores.
+            masks (List[`torch.LongTensor`], *optional*):
+                list of optional tensors containing the masks of shape (`query_length` + `response_length`)
         Returns:
             `tuple`: The input processed data.
         """
@@ -520,6 +560,7 @@ class PPOTrainer(BaseTrainer):
         queries = [tensor.to(self.current_device) for tensor in queries]
         responses = [tensor.to(self.current_device) for tensor in responses]
         scores = [tensor.to(self.current_device) for tensor in scores]
+        masks = [tensor.to(self.current_device) for tensor in masks] if masks is not None else None
 
         # squeeze scores if needed
         for i, score in enumerate(scores):
@@ -528,7 +569,7 @@ class PPOTrainer(BaseTrainer):
             elif score.dim() == 1:
                 scores[i] = score.squeeze()
 
-        return queries, responses, scores
+        return queries, responses, scores, masks
 
     @PPODecorators.empty_cuda_cache()
     def step(
@@ -536,6 +577,7 @@ class PPOTrainer(BaseTrainer):
         queries: List[torch.LongTensor],
         responses: List[torch.LongTensor],
         scores: List[torch.FloatTensor],
+        response_masks: Optional[List[torch.LongTensor]] = None,
     ):
         """
         Run a PPO optimisation step given a list of queries, model responses, and rewards.
@@ -547,18 +589,35 @@ class PPOTrainer(BaseTrainer):
                 List of tensors containing the encoded responses of shape (`response_length`)
             scores (List[`torch.FloatTensor`]):
                 List of tensors containing the scores.
+            response_masks (List[`torch.FloatTensor`], *optional*)):
+                List of tensors containing masks of the response tokens.
 
         Returns:
             `dict[str, Any]`: A summary of the training statistics
         """
         bs = self.config.batch_size
 
-        queries, responses, scores = self._step_safety_checker(bs, queries, responses, scores)
+        queries, responses, scores, response_masks = self._step_safety_checker(
+            bs, queries, responses, scores, response_masks
+        )
+        scores = torch.tensor(scores, device=self.current_device)
+        if self.config.use_score_scaling:
+            # Score scaling
+            scores_mean, scores_std = self.running.update(scores)
+            if self.config.use_score_norm:
+                scores = (scores - self.running.mean) / self.running.std
+            else:
+                scores /= self.running.std
+
+        if self.config.score_clip is not None:
+            # Score clipping
+            scores_dtype = scores.dtype
+            scores = torch.clip(scores.float(), -self.config.score_clip, self.config.score_clip).to(dtype=scores_dtype)
 
         # if we want to push best model to the hub
         if hasattr(self, "highest_reward"):
             if self.compare_step % self.config.compare_steps == 0:
-                curr_mean_reward = torch.tensor(scores).mean()
+                curr_mean_reward = scores.mean()
                 # if the best reward ever seen
                 if curr_mean_reward > self.highest_reward:
                     self.highest_reward = curr_mean_reward
@@ -577,7 +636,10 @@ class PPOTrainer(BaseTrainer):
             pad_first = self.tokenizer.padding_side == "left"
 
             model_inputs["input_ids"] = self.accelerator.pad_across_processes(
-                model_inputs["input_ids"], dim=1, pad_index=self.tokenizer.pad_token_id, pad_first=pad_first
+                model_inputs["input_ids"],
+                dim=1,
+                pad_index=self.tokenizer.pad_token_id,
+                pad_first=pad_first,
             )
             model_inputs["attention_mask"] = self.accelerator.pad_across_processes(
                 model_inputs["attention_mask"], dim=1, pad_index=0, pad_first=pad_first
@@ -590,62 +652,74 @@ class PPOTrainer(BaseTrainer):
                     pad_first=pad_first,
                 )
                 model_inputs["decoder_attention_mask"] = self.accelerator.pad_across_processes(
-                    model_inputs["decoder_attention_mask"], dim=1, pad_index=0, pad_first=pad_first
+                    model_inputs["decoder_attention_mask"],
+                    dim=1,
+                    pad_index=0,
+                    pad_first=pad_first,
                 )
 
         model_inputs_names = list(model_inputs.keys())
 
-        with torch.no_grad():
-            all_logprobs, _, values, masks = self.batched_forward_pass(self.model, queries, responses, model_inputs)
+        full_kl_penalty = self.config.kl_penalty == "full"
 
+        with torch.no_grad():
+            all_logprobs, logits_or_none, values, masks = self.batched_forward_pass(
+                self.model,
+                queries,
+                responses,
+                model_inputs,
+                response_masks=response_masks,
+                return_logits=full_kl_penalty,
+            )
             # for when the model is a peft model
             if self.is_peft_model and hasattr(
-                self.accelerator.unwrap_model(self.model).pretrained_model, "disable_adapter"
+                self.accelerator.unwrap_model(self.model).pretrained_model,
+                "disable_adapter",
             ):
                 with self.accelerator.unwrap_model(self.model).pretrained_model.disable_adapter():
-                    ref_logprobs, _, _, _ = self.batched_forward_pass(self.model, queries, responses, model_inputs)
+                    ref_logprobs, ref_logits_or_none, _, _ = self.batched_forward_pass(
+                        self.model, queries, responses, model_inputs, return_logits=full_kl_penalty
+                    )
             elif self.is_peft_model and not hasattr(self.model.pretrained_model, "disable_adapter"):
                 raise ValueError(
                     "You are using a `peft` version that does not support `disable_adapter`. Please update your `peft` version to the latest version."
                 )
 
             else:
-                ref_logprobs, _, _, _ = self.batched_forward_pass(self.ref_model, queries, responses, model_inputs)
+                ref_logprobs, ref_logits_or_none, _, _ = self.batched_forward_pass(
+                    self.ref_model, queries, responses, model_inputs, return_logits=full_kl_penalty
+                )
 
         timing["time/ppo/forward_pass"] = time.time() - t
 
-        t = time.time()
-        rewards, non_score_reward = self.compute_rewards(scores, all_logprobs, ref_logprobs, masks)
-        timing["time/ppo/compute_rewards"] = time.time() - t
+        with torch.no_grad():
+            t = time.time()
+            if full_kl_penalty:
+                active_full_logprobs = logprobs_from_logits(logits_or_none, None, gather=False)
+                ref_full_logprobs = logprobs_from_logits(ref_logits_or_none, None, gather=False)
+
+                rewards, non_score_reward = self.compute_rewards(
+                    scores, active_full_logprobs, ref_full_logprobs, masks
+                )
+            else:
+                rewards, non_score_reward = self.compute_rewards(scores, all_logprobs, ref_logprobs, masks)
+            timing["time/ppo/compute_rewards"] = time.time() - t
+
+            t = time.time()
+            values, advantages, returns = self.compute_advantages(values, rewards, masks)
+            timing["time/ppo/compute_advantages"] = time.time() - t
 
         # upcast to float32 to avoid dataset issues
-        mini_batch_dict = {
+        batch_dict = {
             "queries": queries,
             "responses": responses,
             "logprobs": all_logprobs.to(torch.float32),
             "values": values.to(torch.float32),
-            "rewards": rewards,
             "masks": masks,
+            "advantages": advantages,
+            "returns": returns,
         }
-
-        def collator(data):
-            return_dict = dict()
-            for key in data[0]:
-                if key in ["queries", "responses"]:
-                    return_dict[key] = [d[key] for d in data]
-                else:
-                    return_dict[key] = torch.stack([d[key] for d in data]).to(self.current_device)
-            return return_dict
-
-        mini_batch_dict.update(model_inputs)
-        mini_batch_data = Dataset.from_dict(mini_batch_dict)
-        mini_batch_data.set_format("torch")
-        mini_batch_dataloader = torch.utils.data.DataLoader(
-            mini_batch_data,
-            batch_size=self.config.mini_batch_size,
-            shuffle=True,
-            collate_fn=collator,
-        )
+        batch_dict.update(model_inputs)
 
         t = time.time()
         all_stats = []
@@ -653,30 +727,54 @@ class PPOTrainer(BaseTrainer):
         for _ in range(self.config.ppo_epochs):
             if early_stop:
                 break
-            for batch in mini_batch_dataloader:
-                with self.accelerator.accumulate(self.model):
-                    model_inputs = {k: batch[k] for k in model_inputs_names}
-                    logprobs, logits, vpreds, _ = self.batched_forward_pass(
-                        self.model, batch["queries"], batch["responses"], model_inputs, return_logits=True
-                    )
+            b_inds = np.random.permutation(bs)
+            for backward_batch_start in range(0, bs, self.config.backward_batch_size):
+                backward_batch_end = backward_batch_start + self.config.backward_batch_size
+                backward_batch_inds = b_inds[backward_batch_start:backward_batch_end]
 
-                train_stats = self.train_minibatch(
-                    batch["logprobs"],
-                    batch["values"],
-                    batch["rewards"],
-                    logprobs,
-                    logits,
-                    vpreds,
-                    batch["masks"],
-                )
+                for mini_batch_start in range(0, self.config.backward_batch_size, self.config.mini_batch_size):
+                    mini_batch_end = mini_batch_start + self.config.mini_batch_size
+                    mini_batch_inds = backward_batch_inds[mini_batch_start:mini_batch_end]
+                    mini_batch_dict = {
+                        "logprobs": batch_dict["logprobs"][mini_batch_inds],
+                        "values": batch_dict["values"][mini_batch_inds],
+                        "masks": batch_dict["masks"][mini_batch_inds],
+                        # hacks: the queries and responses are ragged.
+                        "queries": [batch_dict["queries"][i] for i in mini_batch_inds],
+                        "responses": [batch_dict["responses"][i] for i in mini_batch_inds],
+                        "advantages": batch_dict["advantages"][mini_batch_inds],
+                        "returns": batch_dict["returns"][mini_batch_inds],
+                    }
+                    for k in model_inputs_names:
+                        mini_batch_dict[k] = batch_dict[k][mini_batch_inds]
+                    with self.accelerator.accumulate(self.model):
+                        model_inputs = {k: mini_batch_dict[k] for k in model_inputs_names}
 
-                all_stats.append(train_stats)
+                        logprobs, logits, vpreds, _ = self.batched_forward_pass(
+                            self.model,
+                            mini_batch_dict["queries"],
+                            mini_batch_dict["responses"],
+                            model_inputs,
+                            return_logits=True,
+                        )
+                        train_stats = self.train_minibatch(
+                            mini_batch_dict["logprobs"],
+                            mini_batch_dict["values"],
+                            logprobs,
+                            logits,
+                            vpreds,
+                            mini_batch_dict["masks"],
+                            mini_batch_dict["advantages"],
+                            mini_batch_dict["returns"],
+                        )
+                        all_stats.append(train_stats)
 
-                if self.config.early_stopping:
-                    policykl = train_stats["policy/policykl"]
-                    early_stop = self._early_stop(policykl)
-                    if early_stop:
-                        break
+            # typically, early stopping is done at the epoch level
+            if self.config.early_stopping:
+                policykl = train_stats["policy/policykl"]
+                early_stop = self._early_stop(policykl)
+                if early_stop:
+                    break
 
         timing["time/ppo/optimize_step"] = time.time() - t
 
@@ -707,7 +805,10 @@ class PPOTrainer(BaseTrainer):
         stats["ppo/learning_rate"] = self.optimizer.param_groups[0]["lr"]
 
         # Update the KL control - multiply the batch_size by the number of processes
-        self.kl_ctl.update(stats["objective/kl"], self.config.batch_size * self.accelerator.num_processes)
+        self.kl_ctl.update(
+            stats["objective/kl"],
+            self.config.batch_size * self.accelerator.num_processes,
+        )
 
         # Log the total ppo time
         timing["time/ppo/total"] = time.time() - t0
@@ -792,7 +893,6 @@ class PPOTrainer(BaseTrainer):
 
             input_data["decoder_input_ids"] = decoder_inputs["input_ids"]
             input_data["decoder_attention_mask"] = decoder_inputs["attention_mask"]
-
         else:
             input_ids = [torch.cat([q, r]) for q, r in zip(queries, responses)]
             input_data = self.data_collator(
@@ -800,7 +900,6 @@ class PPOTrainer(BaseTrainer):
             ).to(self.current_device)
 
         input_data.pop("labels", None)  # we don't want to compute LM losses
-
         return input_data
 
     @PPODecorators.empty_cuda_cache()
@@ -811,6 +910,7 @@ class PPOTrainer(BaseTrainer):
         responses: torch.Tensor,
         model_inputs: dict,
         return_logits: bool = False,
+        response_masks: Optional[torch.Tensor] = None,
     ):
         """
         Calculate model outputs in multiple batches.
@@ -837,10 +937,12 @@ class PPOTrainer(BaseTrainer):
         all_masks = []
         all_values = []
 
-        for i in range(int(bs / fbs)):
+        for i in range(math.ceil(bs / fbs)):
             input_kwargs = {key: value[i * fbs : (i + 1) * fbs] for key, value in model_inputs.items()}
             query_batch = queries[i * fbs : (i + 1) * fbs]
             response_batch = responses[i * fbs : (i + 1) * fbs]
+            if response_masks is not None:
+                response_masks_batch = response_masks[i * fbs : (i + 1) * fbs]
             logits, _, values = model(**input_kwargs)
 
             if self.is_encoder_decoder:
@@ -854,7 +956,7 @@ class PPOTrainer(BaseTrainer):
             masks = torch.zeros_like(attention_mask)
             masks[:, :-1] = attention_mask[:, 1:]
 
-            for j in range(fbs):
+            for j in range(len(query_batch)):
                 if self.is_encoder_decoder:
                     # Decoder sentence starts always in the index 1 after padding in the Enc-Dec Models
                     start = 1
@@ -864,12 +966,15 @@ class PPOTrainer(BaseTrainer):
                     if attention_mask[j, 0] == 0:  # offset left padding
                         start += attention_mask[j, :].nonzero()[0]
                     end = start + len(response_batch[j])
-
-                if len(logprobs[j, start:end]) < 2:
-                    raise ValueError("Responses are too short. Make sure they are at least 4 tokens long.")
+                    if response_masks is not None:
+                        response_masks_batch[j] = torch.cat(
+                            (torch.zeros_like(query_batch[j]), response_masks_batch[j])
+                        )[1:]
 
                 masks[j, :start] = 0
                 masks[j, end:] = 0
+                if response_masks is not None:
+                    masks[j, start:end] = masks[j, start:end] * response_masks_batch[j][start:end]
 
             if return_logits:
                 all_logits.append(logits)
@@ -891,11 +996,12 @@ class PPOTrainer(BaseTrainer):
         self,
         old_logprobs: torch.FloatTensor,
         values: torch.FloatTensor,
-        rewards: torch.FloatTensor,
         logprobs: torch.FloatTensor,
         logits: torch.FloatTensor,
         vpreds: torch.FloatTensor,
         mask: torch.LongTensor,
+        advantages: torch.FloatTensor,
+        returns: torch.FloatTensor,
     ):
         """
         Train one PPO minibatch
@@ -905,8 +1011,6 @@ class PPOTrainer(BaseTrainer):
                 Log probabilities of the model, shape [batch_size, response_length]
             values (`torch.FloatTensor`):
                 Values of the value head, shape [batch_size, response_length]
-            rewards (`torch.FloatTensor`):
-                Rewards from the reward model, shape [batch_size, response_length]
             query (`torch.LongTensor`):
                 Encoded queries, shape [batch_size, query_length]
             response (`torch.LongTensor`):
@@ -918,19 +1022,18 @@ class PPOTrainer(BaseTrainer):
             train_stats (dict[str, `torch.Tensor`]):
                 Dictionary of training statistics
         """
-        loss_p, loss_v, train_stats = self.loss(old_logprobs, values, rewards, logits, vpreds, logprobs, mask)
+        loss_p, loss_v, train_stats = self.loss(
+            old_logprobs, values, logits, vpreds, logprobs, mask, advantages, returns
+        )
         loss = loss_p + loss_v
-        self.optimizer.zero_grad()
         self.accelerator.backward(loss)
-
         if self.config.max_grad_norm is not None:
-            torch.nn.utils.clip_grad_norm_(
-                filter(lambda p: p.requires_grad, self.model.parameters()), self.config.max_grad_norm
-            )
-
-        t = time.time()
+            if self.accelerator.sync_gradients:
+                self.accelerator.clip_grad_norm_(self.model_params, self.config.max_grad_norm)
         self.optimizer.step()
-        train_stats["time/ppo/optimizer_step"] = torch.Tensor([time.time() - t]).to(self.current_device)
+        # we call optimizer.zero_grad() every time and let `accelerator` handle accumulation
+        # see https://huggingface.co/docs/accelerate/usage_guides/gradient_accumulation#the-finished-code
+        self.optimizer.zero_grad()
         return train_stats
 
     def compute_rewards(
@@ -954,7 +1057,7 @@ class PPOTrainer(BaseTrainer):
         rewards, non_score_rewards = [], []
         for score, logprob, ref_logprob, mask in zip(scores, logprobs, ref_logprobs, masks):
             # compute KL penalty (from difference in logprobs)
-            kl = logprob - ref_logprob
+            kl = self._kl_penalty(logprob, ref_logprob)
             non_score_reward = -self.kl_ctl.value * kl
             non_score_rewards.append(non_score_reward)
             reward = non_score_reward.clone()
@@ -965,15 +1068,57 @@ class PPOTrainer(BaseTrainer):
             rewards.append(reward)
         return torch.stack(rewards), torch.stack(non_score_rewards)
 
+    def _kl_penalty(self, logprob: torch.FloatTensor, ref_logprob: torch.FloatTensor) -> torch.FloatTensor:
+        if self.config.kl_penalty == "kl":
+            return logprob - ref_logprob
+
+        if self.config.kl_penalty == "abs":
+            return (logprob - ref_logprob).abs()
+
+        if self.config.kl_penalty == "mse":
+            return 0.5 * (logprob - ref_logprob).square()
+
+        if self.config.kl_penalty == "full":
+            # Flip is required due to this issue? :https://github.com/pytorch/pytorch/issues/57459
+            return F.kl_div(ref_logprob, logprob, log_target=True, reduction="none").sum(-1)
+
+        raise NotImplementedError
+
+    def compute_advantages(
+        self: torch.FloatTensor,
+        values: torch.FloatTensor,
+        rewards: torch.FloatTensor,
+        mask: torch.FloatTensor,
+    ):
+        lastgaelam = 0
+        advantages_reversed = []
+        gen_len = rewards.shape[-1]
+
+        values = values * mask
+        rewards = rewards * mask
+
+        for t in reversed(range(gen_len)):
+            nextvalues = values[:, t + 1] if t < gen_len - 1 else 0.0
+            delta = rewards[:, t] + self.config.gamma * nextvalues - values[:, t]
+            lastgaelam = delta + self.config.gamma * self.config.lam * lastgaelam
+            advantages_reversed.append(lastgaelam)
+        advantages = torch.stack(advantages_reversed[::-1]).transpose(0, 1)
+
+        returns = advantages + values
+        advantages = masked_whiten(advantages, mask)
+        advantages = advantages.detach()
+        return values, advantages, returns
+
     def loss(
         self,
         old_logprobs: torch.FloatTensor,
         values: torch.FloatTensor,
-        rewards: torch.FloatTensor,
         logits: torch.FloatTensor,
         vpreds: torch.FloatTensor,
         logprobs: torch.FloatTensor,
         mask: torch.LongTensor,
+        advantages: torch.FloatTensor,
+        returns: torch.FloatTensor,
     ):
         """
         Calculate policy and value losses.
@@ -992,45 +1137,42 @@ class PPOTrainer(BaseTrainer):
             logprobs (`torch.FloatTensor`):
                 Log probabilities of the model, shape (`batch_size`, `response_length`)
         """
-        lastgaelam = 0
-        advantages_reversed = []
-        gen_len = rewards.shape[-1]
-
-        values = values * mask
-        rewards = rewards * mask
-
-        for t in reversed(range(gen_len)):
-            nextvalues = values[:, t + 1] if t < gen_len - 1 else 0.0
-            delta = rewards[:, t] + self.config.gamma * nextvalues - values[:, t]
-            lastgaelam = delta + self.config.gamma * self.config.lam * lastgaelam
-            advantages_reversed.append(lastgaelam)
-        advantages = torch.stack(advantages_reversed[::-1]).transpose(0, 1)
-
-        returns = advantages + values
-        advantages = masked_whiten(advantages, mask)
-        advantages = advantages.detach()
 
         vpredclipped = clip_by_value(
-            vpreds, values - self.config.cliprange_value, values + self.config.cliprange_value
+            vpreds,
+            values - self.config.cliprange_value,
+            values + self.config.cliprange_value,
         )
 
         vf_losses1 = (vpreds - returns) ** 2
         vf_losses2 = (vpredclipped - returns) ** 2
         vf_loss = 0.5 * masked_mean(torch.max(vf_losses1, vf_losses2), mask)
-        vf_clipfrac = masked_mean(torch.gt(vf_losses2, vf_losses1).double(), mask)
+        vf_clipfrac = masked_mean(torch.gt(vf_losses2, vf_losses1).float(), mask)
 
         ratio = torch.exp(logprobs - old_logprobs)
+
         pg_losses = -advantages * ratio
         pg_losses2 = -advantages * torch.clamp(ratio, 1.0 - self.config.cliprange, 1.0 + self.config.cliprange)
 
         pg_loss = masked_mean(torch.max(pg_losses, pg_losses2), mask)
-        pg_clipfrac = masked_mean(torch.gt(pg_losses2, pg_losses).double(), mask)
+        pg_clipfrac = masked_mean(torch.gt(pg_losses2, pg_losses).float(), mask)
 
         loss = pg_loss + self.config.vf_coef * vf_loss
 
+        avg_ratio = masked_mean(ratio, mask).item()
+        if avg_ratio > self.config.ratio_threshold:
+            warnings.warn(
+                f"The average ratio of batch ({avg_ratio:.2f}) exceeds threshold {self.config.ratio_threshold:.2f}. Skipping batch."
+            )
+            pg_loss = pg_loss * 0.0
+            vf_loss = vf_loss * 0.0
+            loss = loss * 0.0
+
         entropy = masked_mean(entropy_from_logits(logits), mask)
+
         approxkl = 0.5 * masked_mean((logprobs - old_logprobs) ** 2, mask)
         policykl = masked_mean(old_logprobs - logprobs, mask)
+
         return_mean, return_var = masked_mean(returns, mask), masked_var(returns, mask)
         value_mean, value_var = masked_mean(values, mask), masked_var(values, mask)
 
@@ -1080,10 +1222,10 @@ class PPOTrainer(BaseTrainer):
         mean_non_score_reward = masked_mean(
             data["non_score_reward"], mask
         )  # non_score_reward is size `batch_size`, `response_length`
-        mean_scores = torch.stack(data["scores"]).mean()  # scores is size `batch_size`
-        std_scores = torch.stack(data["scores"]).std()
+        mean_scores = data["scores"].mean()  # scores is size `batch_size`
+        std_scores = data["scores"].std()
 
-        if mean_kl.item() < 0.0:
+        if mean_kl.item() < -1.0:
             # warn users
             warnings.warn(
                 f"KL divergence is starting to become negative: {mean_kl.item():.2f} - this might be a precursor for failed training."
@@ -1124,6 +1266,7 @@ class PPOTrainer(BaseTrainer):
         stats: dict,
         batch: dict,
         rewards: List[torch.FloatTensor],
+        columns_to_log: List[str] = ["query", "response"],
     ):
         """
         A function that logs all the training stats. Call it at the end of each epoch.
@@ -1153,8 +1296,13 @@ class PPOTrainer(BaseTrainer):
             elif self.config.log_with == "wandb":
                 import wandb
 
-                table_rows = [list(r) for r in zip(batch["query"], batch["response"], rewards.cpu().tolist())]
-                logs.update({"game_log": wandb.Table(columns=["query", "response", "reward"], rows=table_rows)})
+                if any([column_to_log not in batch.keys() for column_to_log in columns_to_log]):
+                    raise ValueError(f"Columns to log {columns_to_log} are not present in the batch {batch.keys()}.")
+
+                batch_list = [batch[column_to_log] for column_to_log in columns_to_log]
+
+                table_rows = [list(r) for r in zip(*batch_list, rewards.cpu().tolist())]
+                logs.update({"game_log": wandb.Table(columns=[*columns_to_log, "reward"], rows=table_rows)})
             # All reduce rewards if distributed
             if self.is_distributed:
                 import torch.distributed as dist
@@ -1175,15 +1323,14 @@ class PPOTrainer(BaseTrainer):
             logs["env/reward_std"] = torch.std(rewards).cpu().numpy().item()
             logs["env/reward_dist"] = rewards.cpu().numpy()
 
-            logs["env/reward_mean"] = torch.mean(rewards).cpu().numpy().item()
-            logs["env/reward_std"] = torch.std(rewards).cpu().numpy().item()
-            logs["env/reward_dist"] = rewards.cpu().numpy()
-
             if self.config.log_with == "tensorboard":
                 # update the current step
                 self.current_step += 1
 
-            self.accelerator.log(logs, step=self.current_step if self.config.log_with == "tensorboard" else None)
+            self.accelerator.log(
+                logs,
+                step=self.current_step if self.config.log_with == "tensorboard" else None,
+            )
 
         else:
             if self.is_distributed:
@@ -1202,10 +1349,16 @@ class PPOTrainer(BaseTrainer):
             path (`str`): The path to save the model card to.
             model_name (`str`, *optional*): The name of the model, defaults to `TRL Model`.
         """
+        try:
+            user = whoami()["name"]
+        # handle the offline case
+        except:  # noqa
+            warnings.warn("Cannot retrieve user information assuming you are running in offline mode.")
+            return
+
         if not os.path.exists(path):
             os.makedirs(path)
 
-        user = whoami()["name"]
         model_card_content = MODEL_CARD_TEMPLATE.format(model_name=model_name, model_id=f"{user}/{path}")
         with open(os.path.join(path, "README.md"), "w", encoding="utf-8") as f:
             f.write(model_card_content)
@@ -1214,3 +1367,18 @@ class PPOTrainer(BaseTrainer):
         self.accelerator.unwrap_model(self.model).save_pretrained(save_directory)
         self.tokenizer.save_pretrained(save_directory)
         self.create_model_card(save_directory)
+
+    def _show_tokens(self, tokens, masks):
+        from rich import print
+        from rich.text import Text
+
+        text = Text()
+
+        for i, (token, mask) in enumerate(zip(tokens, masks)):
+            if mask == 1:
+                text.append(self.tokenizer.decode(token.item()), style="black on deep_sky_blue1")
+                text.append(" ")
+            else:
+                text.append(self.tokenizer.decode(token.item()), style="black on cyan3")
+                text.append(" ")
+        print(text)

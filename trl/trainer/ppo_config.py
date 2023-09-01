@@ -11,13 +11,51 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import logging
+import os
+import subprocess
 import warnings
 from dataclasses import dataclass, field
 from typing import Optional
 
 import numpy as np
+import requests
+
+from trl.trainer.utils import exact_div
 
 from ..core import flatten_dict
+
+
+def autotag() -> str:
+    wandb_tag = ""
+    logging.info("autotag feature is enabled")
+    try:
+        git_tag = subprocess.check_output(["git", "describe", "--tags"]).decode("ascii").strip()
+        wandb_tag = f"{git_tag}"
+        logging.info(f"identified git tag: {git_tag}")
+    except subprocess.CalledProcessError:
+        return wandb_tag
+
+    git_commit = subprocess.check_output(["git", "rev-parse", "--verify", "HEAD"]).decode("ascii").strip()
+    try:
+        # if the current branch is not main, try find the PR number
+        git_branch = subprocess.check_output(["git", "rev-parse", "--abbrev-ref", "HEAD"]).decode("ascii").strip()
+        if git_branch != "main":
+            # try finding the pull request number on github
+            prs = requests.get(f"https://api.github.com/search/issues?q=repo:lvwerra/trl+is:pr+{git_commit}")
+            if prs.status_code == 200:
+                prs = prs.json()
+                if len(prs["items"]) > 0:
+                    pr = prs["items"][0]
+                    pr_number = pr["number"]
+                    wandb_tag += f",pr-{pr_number}"
+            logging.info(f"identified github pull request: {pr_number}")
+        else:
+            logging.info("current branch is main, not searching for pull request")
+    except Exception as e:
+        logging.warning(f"Automatic autotag failed with the following error: {e}")
+
+    return wandb_tag
 
 
 @dataclass
@@ -26,6 +64,10 @@ class PPOConfig(object):
     Configuration class for PPOTrainer
     """
 
+    task_name: Optional[str] = field(
+        default=None,
+        metadata={"help": "Name of task to use - used only for tracking purposes"},
+    )
     model_name: Optional[str] = field(
         default=None,
         metadata={"help": "Name of model to use - used only for tracking purposes"},
@@ -36,6 +78,12 @@ class PPOConfig(object):
     init_kl_coef: Optional[float] = field(
         default=0.2,
         metadata={"help": "Initial KL penalty coefficient (used for adaptive and linear control)"},
+    )
+    kl_penalty: Optional[str] = field(
+        default="kl",
+        metadata={
+            "help": "kl penalty options: 'kl': model_logp - ref_logp,  'abs': abs(kl),  'mse': mean squared error mse(kl) and 'full': the actual kl for all tokens in the distribution"
+        },
     )
     target: Optional[float] = field(default=6, metadata={"help": "Target KL value for adaptive KL control"})
     horizon: Optional[float] = field(default=10000, metadata={"help": "Horizon for adaptive KL control"})
@@ -54,7 +102,10 @@ class PPOConfig(object):
         metadata={"help": "Number of samples forward passed through model at a time"},
     )
     mini_batch_size: Optional[int] = field(
-        default=1, metadata={"help": "Number of samples optimized inside PPO together"}
+        default=1, metadata={"help": "Number of samples optimized in each mini batch"}
+    )
+    backward_batch_size: Optional[int] = field(
+        default=1, metadata={"help": "Number of samples optimized in an `optimizer.step()` call"}
     )
     gradient_accumulation_steps: Optional[int] = field(
         default=1, metadata={"help": "The number of gradient accumulation steps"}
@@ -79,7 +130,11 @@ class PPOConfig(object):
     )
     accelerator_kwargs: Optional[dict] = field(
         default_factory=dict,
-        metadata={"help": "Keyword arguments for the accelerator (e.g. `logging_dir`)"},
+        metadata={"help": "Keyword arguments for the accelerator"},
+    )
+    project_kwargs: Optional[dict] = field(
+        default_factory=dict,
+        metadata={"help": "Keyword arguments for the accelerator project config (e.g. `logging_dir`)"},
     )
     tracker_project_name: Optional[str] = field(
         default="trl", metadata={"help": "Name of project to use for tracking"}
@@ -106,6 +161,14 @@ class PPOConfig(object):
         default=1,
         metadata={"help": "Number of steps between comparison of the current reward with the best seen so far"},
     )
+    ratio_threshold: Optional[float] = field(
+        default=10.0, metadata={"help": "Skip mini-batches with high PPO ratios that can cause loss spikes"}
+    )
+    use_score_scaling: Optional[bool] = field(default=False, metadata={"help": "Use score scaling"})
+    use_score_norm: Optional[bool] = field(
+        default=False, metadata={"help": "Use score normalization. Only applicable if use_score_scaling is True"}
+    )
+    score_clip: Optional[float] = field(default=None, metadata={"help": "Score clipping"})
 
     def __post_init__(self):
         if self.forward_batch_size is not None:
@@ -114,17 +177,36 @@ class PPOConfig(object):
             )
             self.mini_batch_size = self.forward_batch_size
 
+        self.backward_batch_size = self.mini_batch_size * self.gradient_accumulation_steps
+        exact_div(
+            self.batch_size,
+            self.backward_batch_size,
+            "`batch_size`",
+            "`mini_batch_size * gradient_accumulation_steps`",
+            "`batch_size` must be a multiple of `mini_batch_size * gradient_accumulation_steps`",
+        )
+
         # check if wandb is installed
         if self.log_with == "wandb":
             # raise error if wandb is not installed
             try:
                 import wandb  # noqa: F401
+
+                existing_wandb_tag = os.environ.get("WANDB_TAGS", "")
+                wandb_tag = autotag()
+                if len(wandb_tag) > 0:
+                    if len(existing_wandb_tag) > 0:
+                        os.environ["WANDB_TAGS"] = ",".join([existing_wandb_tag, wandb_tag])
+                    else:
+                        os.environ["WANDB_TAGS"] = wandb_tag
+                    logging.info(f"the following tags will be used for wandb logging: {os.environ['WANDB_TAGS']}")
             except ImportError:
                 raise ImportError(
                     "Please install wandb to use wandb logging. You can do this by running `pip install wandb`."
                 )
 
         self.total_ppo_epochs = int(np.ceil(self.steps / self.batch_size))
+        assert self.kl_penalty in ["kl", "abs", "mse", "full"]
 
     def to_dict(self):
         output_dict = {}
