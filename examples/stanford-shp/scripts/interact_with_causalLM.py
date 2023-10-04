@@ -38,8 +38,8 @@ parser = HfArgumentParser(ScriptArguments)
 script_args = parser.parse_args_into_dataclasses()[0]
 
 # Now let's build the model, the reference model, and the tokenizer.
-# model = AutoModelForCausalLM.from_pretrained(script_args.model_name)
-model = AutoModelForSeq2SeqLM.from_pretrained(script_args.model_name)
+model = AutoModelForCausalLM.from_pretrained(script_args.model_name)
+# model = AutoModelForSeq2SeqLM.from_pretrained(script_args.model_name)
 tokenizer = AutoTokenizer.from_pretrained(script_args.model_name)
 
 generation_kwargs = {"top_k": 0.0, "top_p": 0.9, "do_sample": True, "eos_token_id": -1}
@@ -49,7 +49,7 @@ device=0
 if not torch.cuda.is_available():
     device="cpu"  
 
-model.to(device)
+model.half().to(device)
 
 while True:
     no_of_lines = 1
