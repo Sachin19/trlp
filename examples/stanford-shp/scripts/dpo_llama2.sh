@@ -1,11 +1,11 @@
 #!/bin/bash
 #SBATCH -N 1
-#SBATCH -n 5
+#SBATCH -n 1
 #SBATCH --output=./slurm-outputs/%j.out
 #SBATCH --gres=gpu:1
 #SBATCH --mem=50g
 #SBATCH -t 0
-#SBATCH -x tir-0-32,tir-0-36,tir-0-11,tir-1-11
+#SBATCH -x tir-0-32,tir-0-36,tir-0-11,tir-1-11,tir-1-32,tir-1-18
 # ###SBATCH -x tir-0-9,tir-0-7,tir-0-13,tir-0-15,tir-0-17,tir-0-19,tir-0-11,tir-0-32,tir-0-36,tir-1-13,tir-0-3,tir-1-11,tir-1-28,tir-1-18
 # ####SBATCH -x tir-0-36,tir-1-28,tir-1-18,tir-1-23,tir-1-13
 # #######SBATCH -x tir-0-19,tir-0-36,tir-0-32,tir-0-17,tir-1-28,tir-1-11,tir-0-11
@@ -48,12 +48,20 @@ cd /projects/tir6/general/sachink/personalized-LM/2023/trl/examples/stanford-shp
 instrtype=$1
 subset=$2
 port=$3
+# WANDB__SERVICE_WAIT=300 torchrun --nnodes 1  --nproc_per_node 1 --rdzv_endpoint 0.0.0.0:$port scripts/dpo_llama2.py\
+#     --data_source reddit\
+#     --model_name_or_path="/projects/tir6/general/sachink/personalized-LM/2023/models/0923-newreddit/sft/llama-7B_${instrtype}_${subset}/final_checkpoint"\
+#     --instrtype $instrtype\
+#     --subset $subset\
+#     --output_dir="/projects/tir6/general/sachink/personalized-LM/2023/models/0923-newreddit/dpo/llama-7B_${instrtype}_${subset}/"
+
 WANDB__SERVICE_WAIT=300 torchrun --nnodes 1  --nproc_per_node 1 --rdzv_endpoint 0.0.0.0:$port scripts/dpo_llama2.py\
-    --data_source reddit\
-    --model_name_or_path="/projects/tir6/general/sachink/personalized-LM/2023/models/0923-newreddit/sft/llama-7B_${instrtype}_${subset}/final_checkpoint"\
+    --data_source chp\
+    --model_name_or_path="/projects/tir6/general/sachink/personalized-LM/2023/models/1023-chp/sft/llama-7B_${instrtype}_${subset}/final_checkpoint"\
     --instrtype $instrtype\
     --subset $subset\
-    --output_dir="/projects/tir6/general/sachink/personalized-LM/2023/models/0923-newreddit/dpo/llama-7B_${instrtype}_${subset}/"
+    --data_dir /projects/tir6/general/sachink/personalized-LM/2023/chp\
+    --output_dir="/projects/tir6/general/sachink/personalized-LM/2023/models/1023-chp/dpo/llama-7B_${instrtype}_${subset}/"
 # torchrun --nnodes 1  --nproc_per_node 1 scripts/sft_llama2.py\
 #     --data_source "SO"\
 #     --model_name="/projects/tir6/general/sachink/personalized-LM/2023/llama/hf_model-7B"\

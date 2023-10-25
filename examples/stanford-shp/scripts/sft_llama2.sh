@@ -9,7 +9,7 @@
 #####SBATCH -x tir-0-36,tir-1-28,tir-1-18,tir-1-23,tir-1-13
 ########SBATCH -x tir-0-19,tir-0-36,tir-0-32,tir-0-17,tir-1-28,tir-1-11,tir-0-11
 #### SBATCH -w tir-0-9
-#SBATCH -x tir-0-32,tir-0-36,tir-0-11,tir-1-32,tir-0-32
+#SBATCH -x tir-0-32,tir-0-36,tir-0-11,tir-1-32,tir-0-32,tir-1-18,tir-1-13,tir-1-11,tir-0-3
 ############,tir-0-7,tir-0-13,tir-0-15,tir-0-17,tir-0-19,tir-0-11,tir-0-32,tir-0-36,tir-1-28,tir-1-18,tir-1-13,tir-0-3
 
 set -x  # echo commands to stdout
@@ -69,7 +69,7 @@ torchrun --nnodes 1  --nproc_per_node 1 --rdzv_endpoint 0.0.0.0:$3 scripts/sft_l
     --no_gradient_checkpointing\
     --learning_rate 1e-5\
     --max_steps 5000\
-    --data_dir /home/chanyoun/datasets/chp\
+    --data_dir /projects/tir6/general/sachink/personalized-LM/2023/chp\
     --instrtype $instrtype\
     --data_source chp\
     --output_dir /projects/tir6/general/sachink/personalized-LM/2023/models/1023-chp/sft/llama-7B_${instrtype}_${subset}

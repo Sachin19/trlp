@@ -5,7 +5,7 @@ from typing import Dict, Optional
 from functools import partial
 
 import torch
-from datasets import Dataset, load_dataset
+from datasets import Dataset, load_dataset, load_from_disk
 from peft import AutoPeftModelForCausalLM, LoraConfig
 from transformers import AutoTokenizer, HfArgumentParser, TrainingArguments
 
@@ -107,6 +107,7 @@ class ScriptArguments:
     save_steps: Optional[int] = field(default=100, metadata={"help": "the saving frequency"})
     eval_steps: Optional[int] = field(default=100, metadata={"help": "the evaluation frequency"})
 
+    data_dir: Optional[str] = field(default=None, metadata={"help": "the output directory"})
     output_dir: Optional[str] = field(default="./results", metadata={"help": "the output directory"})
     log_freq: Optional[int] = field(default=1, metadata={"help": "the logging frequency"})
 
@@ -137,6 +138,67 @@ def subsample(dataset, ratio_thresh, examples_per_post):
     )
     df = df.sample(n=len(df))
     return Dataset.from_pandas(df)
+
+
+def get_chp_paired(
+    data_dir: str = "chp",
+    split: str = "train",
+    subset: str = "all",
+    sanity_check: bool = False,
+    cache_dir: str = None,
+    num_proc=24,
+) -> Dataset:
+    dataset = load_from_disk(data_dir)[split]
+    if not subset == "all":
+        dataset = dataset.filter(lambda x: x['domain'] == subset)
+    
+    cols_to_remove = dataset.column_names
+    cols_to_remove.remove("history")
+    cols_to_remove.remove("human_ref_A")
+    cols_to_remove.remove("human_ref_B")
+    cols_to_remove.remove("labels")
+    cols_to_remove.remove("score_ratio")
+
+    dataset.remove_columns(cols_to_remove)
+
+    print(f"Original training data size: {len(dataset)}")
+    dataset = subsample(dataset, script_args.score_ratio_threshold, script_args.num_examples_per_post)
+    print(f"Filtered training data with >{script_args.score_ratio_threshold} score ratio and {script_args.num_examples_per_post} comment pairs per post: {len(dataset)}")
+
+    original_columns = dataset.column_names
+
+    if sanity_check:
+        dataset = dataset.select(range(min(len(dataset), 1000)))
+
+    def return_prompt_and_responses(samples) -> Dict[str, str]:
+        return_object = {"prompt": [], "chosen": [], "rejected": []}
+        
+        for domain, question, response_j, response_k, label in zip(samples['domain'], samples["history"], samples["human_ref_A"], samples["human_ref_B"], samples['labels']):
+            domain = domain.split("_")[0]
+            if script_args.instrtype == "subredditname":
+                instruction = f"Write a response to this reddit post in the following subreddit. SUBREDDIT: {domain}. \n\n POST: "
+            elif script_args.instrtype == "contextualized":
+                instruction = f"Write a response to this reddit post in the subreddit with the following description. SUBREDDIT: {SUBREDDIT2DESCRIPTION[domain]}. \n\n POST: "
+            else:
+                instruction = f"Write a response to this reddit post. \n\n POST: "
+
+            if label == 0:
+                response_j, response_k = response_k, response_j
+            
+            prompt = instruction + question + " \n\n COMMENT: "
+            return_object['prompt'].append(prompt)
+            return_object['chosen'].append(response_j)
+            return_object['rejected'].append(response_k)
+
+        return return_object
+    
+    return dataset.map(
+        return_prompt_and_responses,
+        batched=True,
+        num_proc=num_proc,
+        remove_columns=original_columns,
+    )
+
 
 def get_reddit_paired(
     data_dir: str = "stanfordnlp/shp",
@@ -285,6 +347,21 @@ if __name__ == "__main__":
             lambda x: len(x["prompt"]) + len(x["chosen"]) <= script_args.max_length
             and len(x["prompt"]) + len(x["rejected"]) <= script_args.max_length
         )
+    elif script_args.data_source == "chp":
+        # 2. Load the Stack-exchange paired dataset
+        train_dataset = get_chp_paired(data_dir=script_args.data_dir, split="train", subset=script_args.subset, sanity_check=script_args.sanity_check)
+        train_dataset = train_dataset.filter(
+            lambda x: len(x["prompt"]) + len(x["chosen"]) <= script_args.max_length
+            and len(x["prompt"]) + len(x["rejected"]) <= script_args.max_length
+        )
+
+        # 3. Load evaluation dataset
+        eval_dataset = get_chp_paired(data_dir=script_args.data_dir, split="validation", subset=script_args.subset, sanity_check=True)
+        eval_dataset = eval_dataset.filter(
+            lambda x: len(x["prompt"]) + len(x["chosen"]) <= script_args.max_length
+            and len(x["prompt"]) + len(x["rejected"]) <= script_args.max_length
+        )
+
     else:
         # 2. Load the Stack-exchange paired dataset
         train_dataset = get_reddit_paired(data_dir="stanfordnlp/shp", split="train", subset=script_args.subset, sanity_check=script_args.sanity_check)

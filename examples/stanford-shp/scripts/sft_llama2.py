@@ -81,7 +81,7 @@ class ScriptArguments:
     size_valid_set: Optional[int] = field(default=4000, metadata={"help": "the size of the validation set"})
     streaming: Optional[bool] = field(default=True, metadata={"help": "whether to stream the dataset"})
     shuffle_buffer: Optional[int] = field(default=5000, metadata={"help": "the shuffle buffer size"})
-    seq_length: Optional[int] = field(default=1024, metadata={"help": "the sequence length"})
+    seq_length: Optional[int] = field(default=512, metadata={"help": "the sequence length"})
     num_workers: Optional[int] = field(default=4, metadata={"help": "the number of workers"})
 
     max_steps: Optional[int] = field(default=500, metadata={"help": "the maximum number of sgd steps"})
@@ -303,7 +303,7 @@ def chars_token_ratio(dataset, tokenizer, instrtype=None, nb_examples=400):
         else:
             total_tokens += len(tokenizer.tokenize(text))
     print(total_characters, total_tokens)
-    return total_characters / total_tokens
+    return total_characters / (total_tokens+1e-6)
 
 def create_datasets_reddit(tokenizer, args):
     if args.data_source == "chp":
@@ -324,7 +324,7 @@ def create_datasets_reddit(tokenizer, args):
         df = df.sample(n=len(df))
         return Dataset.from_pandas(df)
     
-    if script_args.subset == "all":
+    if script_args.subset == "all" or args.data_source == "chp":
         dataset = load_dataset(data_path)
     else:
         dataset = load_dataset(data_path, data_dir=script_args.subset)
@@ -332,6 +332,10 @@ def create_datasets_reddit(tokenizer, args):
     print(dataset)
     train_data = dataset["train"]
     valid_data = dataset["validation"]
+
+    if args.data_source == "chp" and script_args.subset != "all":
+        train_data = train_data.filter(lambda x: x['domain'] == script_args.subset)
+        valid_data = valid_data.filter(lambda x: x['domain'] == script_args.subset)
 
     print(f"Original training data size: {len(train_data)}")
     train_data = subsample(train_data, script_args.score_ratio_threshold, script_args.num_examples_per_post)
@@ -502,7 +506,7 @@ trainer = SFTTrainer(
     peft_config=peft_config,
     dataset_text_field="text",
     packing=script_args.packing,
-    max_seq_length=1024,
+    max_seq_length=script_args.seq_length,
     tokenizer=tokenizer,
     args=training_args,
 )
