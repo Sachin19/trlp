@@ -1,0 +1,3 @@
+[submodule "reddit-evaluation-suite/dolma"]
+	path = reddit-evaluation-suite/dolma
+	url = git@github.com:Sachin19/dolma.git
