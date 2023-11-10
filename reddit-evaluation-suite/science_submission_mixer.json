@@ -1,0 +1,27 @@
+{
+  "streams": [
+    {
+      "name": "submissions",
+      "documents": [
+        "s3://ai2-llm/pretraining-data/sources/reddit/v0/submissions_merged_*.jsonl.gz"
+      ],
+      "output": {
+        "path": "s3://ai2-llm/pretraining-data/sources/reddit/science_subreddits/",
+        "max_size_in_bytes": 1000000000
+      },
+      "attributes": [
+        "s3://ai2-llm/pretraining-data/sources/reddit/science_subreddits/submissions_merged_*.jsonl.gz"                         
+      ],
+      "filter": {
+        "include": [
+          "$.attributes[?(@.test__science_subreddit_submissions__all_pass[0][2] > 0.5)]"
+        ],
+        "exclude": [
+        ]
+      },
+      "span_replacement": [
+      ]
+    }
+  ],
+  "processes": 1
+}
