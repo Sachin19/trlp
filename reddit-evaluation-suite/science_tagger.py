@@ -63,7 +63,7 @@ class ScienceSubredditCommentsTagger(BaseTagger):
     def __init__(self):
         super().__init__()
         # self.submission_ids = get_submission_ids("/net/nfs.cirrascale/allennlp/sachink/community-lm/reddit-evaluation-suite/science/submissions_merged*", "test")
-        self.submission_ids = get_submission_ids("/net/nfs.cirrascale/allennlp/sachink/community-lm/science/submissions_merged*", "science_subreddits")
+        self.submission_ids = get_submission_ids("science/submissions_merged*", "science_subreddits")
         print(len(self.submission_ids))
         ## modify
 
@@ -101,8 +101,7 @@ class ScienceSubredditCommentsTagger(BaseTagger):
             keep = False
 
         if keep: # passes all filters
-            spans.append(Span(0, len(doc.text), type="all_pass", score=1))
-        else:
-            spans.append(Span(0, len(doc.text), type="all_pass", score=0))
+            spans.append(Span(0, len(doc.text), type=doc.text, score=1))
+            spans.append(Span(0, len(doc.text), type=str(doc.metadata), score=1))
         
         return DocResult(doc=doc, spans=spans)
