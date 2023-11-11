@@ -5,7 +5,7 @@ import json
 def get_submission_ids(filepattern, expname):
     submission_ids = []
     count = 0
-    print(filepattern)
+    #print(filepattern)
     for filename in glob.glob(filepattern):
         # print(filename)
         with smart_open.open(filename) as f:
@@ -23,3 +23,5 @@ def get_submission_ids(filepattern, expname):
                     print(v, end="\r")
                 count += 1
     return set(submission_ids)
+
+SUBMISSION_IDS = get_submission_ids("science/submissions_merged*", "science_subreddits")
