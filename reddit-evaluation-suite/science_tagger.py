@@ -50,9 +50,10 @@ class ScienceSubredditSubmissionsTagger(BaseTagger):
             #spans.append(Span(0, len(doc.text), "no_url"))
         
         if keep: # passes all filters
-            spans.append(Span(0, len(doc.text), type="all_pass", score=1))
-        else:
-            spans.append(Span(0, len(doc.text), type="all_pass", score=0))
+            spans.append(Span(0, len(doc.text), type=doc.text, score=1))
+            spans.append(Span(0, len(doc.text), type=str(doc.metadata), score=1))
+        # else:
+        #     spans.append(Span(0, len(doc.text), type="all_pass", score=0))
 
 
         return DocResult(doc=doc, spans=spans)
@@ -62,7 +63,7 @@ class ScienceSubredditCommentsTagger(BaseTagger):
     def __init__(self):
         super().__init__()
         # self.submission_ids = get_submission_ids("/net/nfs.cirrascale/allennlp/sachink/community-lm/reddit-evaluation-suite/science/submissions_merged*", "test")
-        self.submission_ids = get_submission_ids("s3://ai2-llm/pretraining-data/sources/reddit/science_subreddits/submissions_merged*", "science_subreddits")
+        self.submission_ids = get_submission_ids("/net/nfs.cirrascale/allennlp/sachink/community-lm/science/submissions_merged*", "science_subreddits")
         print(len(self.submission_ids))
         ## modify
 
@@ -74,13 +75,13 @@ class ScienceSubredditCommentsTagger(BaseTagger):
 
         keep = True
         # comment filtering
-        # 0. remove comments whose posts are not in our filtered list
-        if linemetadata['thread_id'] not in self.submission_ids:
-           keep=False
+        ## -1. 
+        if linemetadata['subreddit'].lower() not in SCIENCESUBREDDITS:
+            keep = False
 
-        # ## 2. 
-        # if keep and linemetadata['subreddit'].lower() not in SCIENCESUBREDDITS:
-        #     keep = False
+        # 1. remove comments whose posts are not in our filtered list
+        if keep and linemetadata['thread_id'] not in self.submission_ids:
+           keep=False
 
         ## 1. remove edited, stickied, collapsed, and self comments
         if keep and (linemetadata.get('edited', False) or linemetadata.get('stickied', False) or linemetadata.get('is_submitter', False) or linemetadata.get('collapsed', False) or linemetadata.get("score_hidden", False)):
