@@ -13,28 +13,54 @@ from tqdm import tqdm
 
 from constants import *
 
+import boto3
+
+s3_client = boto3.client('s3')
+
 parser = argparse.ArgumentParser()
 parser.add_argument("--submissions_file_pattern", required=True)
 parser.add_argument("--comments_file_pattern", required=True)
 parser.add_argument("--output_file", required=True)
+parser.add_argument("--experiment", required=True)
+parser.add_argument("--submissions_tagger_name", required=True)
+parser.add_argument("--comments_tagger_name", required=True)
 
 
 
 args = parser.parse_args()
 
 submission_files = glob.glob(args.submissions_file_pattern)
-comments_files = glob.glob(args.comments_file_pattern)
+
+protocol, comment_pattern = args.comments_file_pattern.split("://")
+items = comment_pattern.split("/")
+bucket = items[0]
+prefix = "/".join(items[1:]).split("*")[0]
+print(protocol, bucket, prefix)
+
+client=boto3.client(protocol)
+comment_objs = client.list_objects_v2(Bucket=bucket, Prefix=prefix)['Contents']
+# comments_files = glob.glob(args.comments_file_pattern)
+comments_files = [f"{protocol}://{bucket}/{obj['Key']}" for obj in comment_objs]
+print(comments_files[:10])
 
 #print(submission_files)
 #print(comments_files)
 ## convert to (post, commentA, commentB setup)
 comments_by_submission = {}
 
+submission_prefix = f"{args.experiment}__{args.submissions_tagger_name}__"
+comments_prefix = f"{args.experiment}__{args.comments_tagger_name}__"
+print(comments_prefix)
+submission_prefix_len = len(submission_prefix)
+comments_prefix_len = len(comments_prefix)
 submissions_id2doc = {}
 for submissions_filename in submission_files:
     with smart_open.open(submissions_filename) as fsubmission:
         for submissiondoc in fsubmission:
-            submissions_id2doc[json.loads(submissiondoc)['id']] = submissiondoc
+            submissiondict = json.loads(submissiondoc)
+            attributes = list(submissiondict['attributes'].keys())
+            submissions_id2doc[submissiondict['id']] = attributes[1][submission_prefix_len:] #metadata
+            
 
 total_comments = 0
 for comments_filename in comments_files:
@@ -47,21 +73,26 @@ for comments_filename in comments_files:
 
             # print(comment_id)
             commentdict = json.loads(commentdoc)
-            commentmetadata = commentdict['metadata']
+            attributes = list(commentdict['attributes'].keys())
+            print(attributes[1])
+            input()
+            commentmetadata = eval(attributes[1][comments_prefix_len:]) #metadata
+            commenttext = attributes[0][comments_prefix_len:] #text
+            # comment_time = datetime.fromisoformat(attributes[2][comments_prefix_len:]).timestamp() # text
 
             user_id_spans = commentmetadata['user_id_spans']
             if len(user_id_spans) > 1:
                 endidx = user_id_spans[1][0]
             else:
-                endidx = len(commentdict['text'])
+                endidx = len(commenttext)
             
-            commenttext = commentdict['text'][user_id_spans[0][1]+2:endidx]
+            commenttext = commenttext[user_id_spans[0][1]+2:endidx]
             submission_id = commentmetadata['thread_id']
 
             subreddit, submission_id, comment_id, commentscore = commentmetadata['subreddit'].lower(), commentmetadata['thread_id'], commentdict['id'], commentmetadata['comment_scores'][0]
-            comment_time = datetime.fromisoformat(commentdict['created']).timestamp()
+            comment_time = datetime.fromisoformat(commentmetadata['created']).timestamp()
 
-            submissiondict = json.loads(submissions_id2doc[submission_id])
+            submissiondict = eval(submissions_id2doc[submission_id])
 
             if subreddit not in comments_by_submission:
                 comments_by_submission[subreddit] = {}
@@ -78,7 +109,7 @@ for comments_filename in comments_files:
             tokens = [t for t in tokens if t.strip() != ""]
             
             comments_by_submission[subreddit][submission_id]['comments'].append({
-                    'comment_id': commentdict['id'], 
+                    'comment_id': comment_id, 
                     'comment_text': commenttext, 
                     'comment_created_utc': comment_time,
                     "comment_score": commentscore,
