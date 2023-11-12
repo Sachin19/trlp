@@ -41,7 +41,7 @@ client=boto3.client(protocol)
 comment_objs = client.list_objects_v2(Bucket=bucket, Prefix=prefix)['Contents']
 # comments_files = glob.glob(args.comments_file_pattern)
 comments_files = [f"{protocol}://{bucket}/{obj['Key']}" for obj in comment_objs]
-print(comments_files[:10])
+print(len(submission_files), len(comments_files))
 
 #print(submission_files)
 #print(comments_files)
@@ -50,7 +50,7 @@ comments_by_submission = {}
 
 submission_prefix = f"{args.experiment}__{args.submissions_tagger_name}__"
 comments_prefix = f"{args.experiment}__{args.comments_tagger_name}__"
-print(comments_prefix)
+# print(comments_prefix)
 submission_prefix_len = len(submission_prefix)
 comments_prefix_len = len(comments_prefix)
 submissions_id2doc = {}
@@ -74,8 +74,8 @@ for comments_filename in comments_files:
             # print(comment_id)
             commentdict = json.loads(commentdoc)
             attributes = list(commentdict['attributes'].keys())
-            print(attributes[1])
-            input()
+            # print(attributes[1])
+            # input()
             commentmetadata = eval(attributes[1][comments_prefix_len:]) #metadata
             commenttext = attributes[0][comments_prefix_len:] #text
             # comment_time = datetime.fromisoformat(attributes[2][comments_prefix_len:]).timestamp() # text
