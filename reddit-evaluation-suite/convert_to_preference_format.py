@@ -98,7 +98,6 @@ for comments_filename in comments_files:
                 comments_by_submission[subreddit] = {}
             if submission_id not in comments_by_submission[subreddit]:
                 comments_by_submission[subreddit][submission_id] = {
-                    'id': submissiondict['id'],
                     'title': submissiondict['metadata']['title'],
                     'text': submissiondict['metadata']['body'],
                     'comments': []
