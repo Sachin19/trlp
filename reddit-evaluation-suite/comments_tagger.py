@@ -47,49 +47,49 @@ def get_spans(doc, redditset, submission_ids):
 
 
 @add_tagger("science_subreddit_comments")
-class ScienceSubredditSubmissionsTagger(BaseTagger):
+class ScienceSubredditCommentsTagger(BaseTagger):
     SUBMISSION_IDS=get_submission_ids("science_subreddits_full/submissions_merged*")
     def predict(self, doc: Document) -> DocResult:
-        spans = get_spans(doc, SCIENCESUBREDDITS, ScienceSubredditSubmissionsTagger.SUBMISSION_IDS)
+        spans = get_spans(doc, SCIENCESUBREDDITS, ScienceSubredditCommentsTagger.SUBMISSION_IDS)
 
         return DocResult(doc=doc, spans=spans)
     
 @add_tagger("science_subreddit_comments_averageactivity")
-class ScienceSubredditSubmissionsTaggerAA(BaseTagger):
+class ScienceSubredditCommentsTaggerAA(BaseTagger):
     SUBMISSION_IDS=get_submission_ids("science_subreddits_averageactivity/submissions_merged*")
     def predict(self, doc: Document) -> DocResult:
-        spans = get_spans(doc, SCIENCESUBREDDITS_AVERAGEACTIVITY, ScienceSubredditSubmissionsTaggerAA.SUBMISSION_IDS)
+        spans = get_spans(doc, SCIENCESUBREDDITS_AVERAGEACTIVITY, ScienceSubredditCommentsTaggerAA.SUBMISSION_IDS)
 
         return DocResult(doc=doc, spans=spans)
     
 @add_tagger("science_subreddit_comments_highactivity")
-class ScienceSubredditSubmissionsTaggerHA(BaseTagger):
+class ScienceSubredditCommentsTaggerHA(BaseTagger):
     SUBMISSION_IDS=get_submission_ids("science_subreddits_highactivity/submissions_merged*")
     def predict(self, doc: Document) -> DocResult:
-        spans = get_spans(doc, SCIENCESUBREDDITS_HIGHACTIVITY, ScienceSubredditSubmissionsTaggerHA.SUBMISSION_IDS)
+        spans = get_spans(doc, SCIENCESUBREDDITS_HIGHACTIVITY, ScienceSubredditCommentsTaggerHA.SUBMISSION_IDS)
 
         return DocResult(doc=doc, spans=spans)
     
 @add_tagger("science_subreddit_comments_veryhighsubscriber")
-class ScienceSubredditSubmissionsTaggerVHS(BaseTagger):
+class ScienceSubredditCommentsTaggerVHS(BaseTagger):
     SUBMISSION_IDS=get_submission_ids("science_subreddits_veryhighsubscriber/submissions_merged*")
     def predict(self, doc: Document) -> DocResult:
-        spans = get_spans(doc, SCIENCESUBREDDITS_VERYHIGHSUBSCRIBER, ScienceSubredditSubmissionsTaggerVHS.SUBMISSION_IDS)
+        spans = get_spans(doc, SCIENCESUBREDDITS_VERYHIGHSUBSCRIBER, ScienceSubredditCommentsTaggerVHS.SUBMISSION_IDS)
 
         return DocResult(doc=doc, spans=spans)
     
 @add_tagger("science_subreddit_comments_highsubscriber")
-class ScienceSubredditSubmissionsTaggerHS(BaseTagger):
+class ScienceSubredditCommentsTaggerHS(BaseTagger):
     SUBMISSION_IDS=get_submission_ids("science_subreddits_highsubscriber/submissions_merged*")
     def predict(self, doc: Document) -> DocResult:
-        spans = get_spans(doc, SCIENCESUBREDDITS_HIGHSUBSCRIBER, ScienceSubredditSubmissionsTaggerHS.SUBMISSION_IDS)
+        spans = get_spans(doc, SCIENCESUBREDDITS_HIGHSUBSCRIBER, ScienceSubredditCommentsTaggerHS.SUBMISSION_IDS)
 
         return DocResult(doc=doc, spans=spans)
     
 @add_tagger("shp_subreddit_comments")
-class SHPSubredditSubmissionsTagger(BaseTagger):
+class SHPSubredditCommentsTagger(BaseTagger):
     SUBMISSION_IDS=get_submission_ids("shp_subreddits/submissions_merged*")
     def predict(self, doc: Document) -> DocResult:
-        spans = get_spans(doc, SCIENCESUBREDDITS_, SHPSubredditSubmissionsTagger.SUBMISSION_IDS)
+        spans = get_spans(doc, SCIENCESUBREDDITS_, SHPSubredditCommentsTagger.SUBMISSION_IDS)
 
         return DocResult(doc=doc, spans=spans)
