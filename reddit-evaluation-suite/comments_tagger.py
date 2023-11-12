@@ -44,6 +44,8 @@ def get_spans(doc, redditset, submission_ids):
         spans.append(Span(0, len(doc.text), type=doc.text, score=1))
         doc.metadata['created'] = doc.created
         spans.append(Span(0, len(doc.text), type=str(doc.metadata), score=1))
+    
+    return spans
 
 
 @add_tagger("science_subreddit_comments")
