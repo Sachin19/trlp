@@ -4,6 +4,8 @@ import argparse
 import json
 
 from datetime import datetime
+from collections import defaultdict
+
 import smart_open
 
 import spacy
@@ -17,23 +19,31 @@ import boto3
 
 s3_client = boto3.client('s3')
 
-
-###### choose examples with only one comments
-###### choose 5-comments per submission (and not more for SFT)
-###### remove noisy examples? maybe in a separate file
 parser = argparse.ArgumentParser()
 parser.add_argument("--submissions_file_pattern", required=True)
 parser.add_argument("--comments_file_pattern", required=True)
-parser.add_argument("--output_file", required=True)
+parser.add_argument("--output_sft_file", required=True)
+parser.add_argument("--output_pref_file", required=True)
 parser.add_argument("--experiment", required=True)
 parser.add_argument("--submissions_tagger_name", required=True)
 parser.add_argument("--comments_tagger_name", required=True)
+parser.add_argument("--max_comments_per_submissions", default=5, type=int)
 
 
 
 args = parser.parse_args()
 
-submission_files = glob.glob(args.submissions_file_pattern)
+protocol, submission_pattern = args.submissions_file_pattern.split("://")
+items = submission_pattern.split("/")
+bucket = items[0]
+prefix = "/".join(items[1:]).split("*")[0]
+print(protocol, bucket, prefix)
+
+client=boto3.client(protocol)
+submission_objs = client.list_objects_v2(Bucket=bucket, Prefix=prefix)['Contents']
+# submissions_files = glob.glob(args.submissions_file_pattern)
+submission_files = [f"{protocol}://{bucket}/{obj['Key']}" for obj in submission_objs]
+# submission_files = glob.glob(args.submissions_file_pattern)
 
 protocol, comment_pattern = args.comments_file_pattern.split("://")
 items = comment_pattern.split("/")
@@ -52,19 +62,25 @@ print(len(submission_files), len(comments_files))
 ## convert to (post, commentA, commentB setup)
 comments_by_submission = {}
 
-submission_prefix = f"{args.experiment}__{args.submissions_tagger_name}__"
+submission_prefix = f"{args.experiment}__{args.submissions_tagger_name}__all_pass"
 comments_prefix = f"{args.experiment}__{args.comments_tagger_name}__"
 # print(comments_prefix)
 submission_prefix_len = len(submission_prefix)
 comments_prefix_len = len(comments_prefix)
 submissions_id2doc = {}
+
+total_submissions = 0
 for submissions_filename in submission_files:
     with smart_open.open(submissions_filename) as fsubmission:
         for submissiondoc in fsubmission:
             submissiondict = json.loads(submissiondoc)
             attributes = list(submissiondict['attributes'].keys())
-            submissions_id2doc[submissiondict['id']] = attributes[1][submission_prefix_len:] #metadata
-            
+            # print(attributes)
+            submissions_id2doc[submissiondict['id']] = attributes[0][submission_prefix_len:] #metadata
+            total_submissions += 1
+            if total_submissions % 1000 == 0:
+                print("\r")
+                print(f"{total_submissions/1000}K", end="", flush=True)
 
 total_comments = 0
 for comments_filename in comments_files:
@@ -123,9 +139,25 @@ for comments_filename in comments_files:
 print(f"comments_by_submission size: {len(comments_by_submission)}")
 
 #### convert to (post, commentA, commentB) for preferences
+def get_ranked_list(paired_prefs, key):
+    item2scores = defaultdict(int)
+    key2items = {}
+    for item1, item2 in paired_prefs:
+        item2scores[item1[key]] += 1
+        if item1[key] not in key2items:
+            key2items[item1[key]] = item1
+        if item2[key] not in key2items:
+            key2items[item2[key]] = item2
+    
+    ranked_keyvalues = sorted([(k, v) for k, v in item2scores.items], key=lambda x:x[1], reverse=True)
+    ranked_items = [key2items[key] for key, value in ranked_keyvalues]
+
+    return ranked_items
+
 posts_processed = 0
 data = []
-foutput = open(args.output_file, "w")
+foutput_pref = open(args.output_pref_file, "w")
+foutput_sft = open(args.output_sft_file, "w")
 for subreddit, thread in comments_by_submission.items():
     for post_id, post in thread.items():
         history = post['text']
@@ -137,6 +169,11 @@ for subreddit, thread in comments_by_submission.items():
         sorted_comments = sorted(post['comments'], key=lambda x: x['comment_created_utc'])
         pairs_submission = []
         for i in range(len(sorted_comments)):
+            if len(sorted_comments) == 1:
+                if len(sorted_comments[i]['comment_text']) > MAX_LEN and sorted_comments[i]['comment_score'] < MIN_SUBMISSION_SCORE:
+                    continue
+                pairs_submission.append([sorted_comments[i], sorted_comments[i], 1.0]) 
+
             for j in range(i+1, len(sorted_comments)):
                 first_comment = sorted_comments[i]
                 second_comment = sorted_comments[j]
@@ -163,13 +200,30 @@ for subreddit, thread in comments_by_submission.items():
                     continue
 
                 overlap_ratio = word_overlap / len(first_unigram.union(second_unigram))
-                pairs_submission.append([first_comment, second_comment, overlap_ratio])
+                pairs_submission.append([first_comment, second_comment, overlap_ratio])            
 
         #print(pairs_submission)
+                
+        ranked_comments = get_ranked_list(pairs_submission, "comment_id")
+        if len(ranked_comments) > args.max_comments_per_submissions:
+            ranked_comments = ranked_comments[:args.max_comments_per_submissions]
+        
+        for rank, comment in enumerate(ranked_comments):
+            line = {
+                    "rank": rank,
+                    "domain": subreddit,
+                    "post_id": post_id,
+                    "history": history,
+                    "c_root_id": comment['comment_id'], 
+                    "created_at_utc": comment['comment_created_utc'],
+                    "score": comment['comment_score'],
+                    "human_ref": comment['comment_text'],
+                }
+            foutput_sft.write(json.dumps(line) + "\n")
+
         if len(pairs_submission) > MAX_NUM_PAIR_PER_SUBMISSION:
             #print(f"{len(pairs_submission)} pairs from one submission over predefined max ({MAX_NUM_PAIR_PER_SUBMISSION})")
             pairs_submission = sorted(pairs_submission, key=lambda x: x[-1], reverse=True)[:MAX_NUM_PAIR_PER_SUBMISSION]
-            # pairs_submission = random.sample(pairs_submission, MAX_NUM_PAIR_PER_SUBMISSION)
         
         for comment_A, comment_B, overlap_ratio in pairs_submission:
             label = int(comment_A['comment_score'] > comment_B['comment_score'])
@@ -197,6 +251,6 @@ for subreddit, thread in comments_by_submission.items():
                     "score_ratio": score_ratio,
                     "len_ratio": len_ratio
                 }
-            foutput.write(json.dumps(line) + "\n")
+            foutput_pref.write(json.dumps(line) + "\n")
     # all_pairs += extend(pairs_submission)
 # print(f"{len(pairs)} pairs from {len(comments_by_submission)} submissions")
