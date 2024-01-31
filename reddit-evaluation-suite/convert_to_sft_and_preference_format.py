@@ -150,7 +150,7 @@ def get_ranked_list(paired_prefs, key):
         if item2[key] not in key2items:
             key2items[item2[key]] = item2
     
-    ranked_keyvalues = sorted([(k, v) for k, v in item2scores.items], key=lambda x:x[1], reverse=True)
+    ranked_keyvalues = sorted([(k, v) for k, v in item2scores.items()], key=lambda x:x[1], reverse=True)
     ranked_items = [key2items[key] for key, value in ranked_keyvalues]
 
     return ranked_items
