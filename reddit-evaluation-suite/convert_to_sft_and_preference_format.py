@@ -169,7 +169,7 @@ for subreddit, thread in comments_by_submission.items():
             print(f"{posts_processed/1000}K", end="", flush=True)
         unique_comment_ids = set([comment['comment_id'] for comment in post['comments']])
         assert len(unique_comment_ids) == len(post['comments']), "shame!"
-        sorted_comments = sorted(p ost['comments'], key=lambda x: x['comment_created_utc'])
+        sorted_comments = sorted(post['comments'], key=lambda x: x['comment_created_utc'])
         pairs_submission = []
         special_pairs_submission = []
         for i in range(len(sorted_comments)):
