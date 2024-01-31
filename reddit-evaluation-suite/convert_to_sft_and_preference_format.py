@@ -83,7 +83,7 @@ for submissions_filename in submission_files:
                 print(f"{total_submissions/1000}K", end="", flush=True)
 
 total_comments = 0
-print(comments_files[:5])
+print(comments_files[:1])
 for comments_filename in comments_files[:1]:
     with smart_open.open(comments_filename) as fcomment:
         for commentdoc in fcomment:
@@ -169,11 +169,12 @@ for subreddit, thread in comments_by_submission.items():
 
         sorted_comments = sorted(post['comments'], key=lambda x: x['comment_created_utc'])
         pairs_submission = []
+        special_pairs_submission = []
         for i in range(len(sorted_comments)):
             if len(sorted_comments) == 1:
-                if len(sorted_comments[i]['comment_text']) > MAX_LEN or sorted_comments[i]['comment_score'] < MIN_SUBMISSION_SCORE:
+                if len(sorted_comments[i]['comment_text']) > MAX_LEN: # or sorted_comments[i]['comment_score'] < MIN_SUBMISSION_SCORE: ### do this filtering later. 
                     continue
-                pairs_submission.append([sorted_comments[i], sorted_comments[i], 1.0]) 
+                special_pairs_submission.append([sorted_comments[i], sorted_comments[i], 1.0]) 
 
             for j in range(i+1, len(sorted_comments)):
                 first_comment = sorted_comments[i]
@@ -206,12 +207,28 @@ for subreddit, thread in comments_by_submission.items():
         #print(pairs_submission)
                 
         ranked_comments = get_ranked_list(pairs_submission, "comment_id")
+        special_ranked_comments = get_ranked_list(special_pairs_submission, "comment_id")
         if len(ranked_comments) > args.max_comments_per_submissions:
             ranked_comments = ranked_comments[:args.max_comments_per_submissions]
         
         for rank, comment in enumerate(ranked_comments):
             line = {
                     "rank": rank,
+                    "only_comment": False,
+                    "domain": subreddit,
+                    "post_id": post_id,
+                    "history": history,
+                    "c_root_id": comment['comment_id'], 
+                    "created_at_utc": comment['comment_created_utc'],
+                    "score": comment['comment_score'],
+                    "human_ref": comment['comment_text'],
+                }
+            foutput_sft.write(json.dumps(line) + "\n")
+        
+        for rank, comment in enumerate(special_ranked_comments):
+            line = {
+                    "rank": rank,
+                    "only_comment": True,
                     "domain": subreddit,
                     "post_id": post_id,
                     "history": history,
