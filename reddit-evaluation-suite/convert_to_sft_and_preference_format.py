@@ -83,7 +83,7 @@ for submissions_filename in submission_files:
                 print(f"{total_submissions/1000}K", end="", flush=True)
 
 total_comments = 0
-print(comments_files[:1])
+print(comments_files[:5])
 for comments_filename in comments_files[:1]:
     with smart_open.open(comments_filename) as fcomment:
         for commentdoc in fcomment:
@@ -171,7 +171,7 @@ for subreddit, thread in comments_by_submission.items():
         pairs_submission = []
         for i in range(len(sorted_comments)):
             if len(sorted_comments) == 1:
-                if len(sorted_comments[i]['comment_text']) > MAX_LEN and sorted_comments[i]['comment_score'] < MIN_SUBMISSION_SCORE:
+                if len(sorted_comments[i]['comment_text']) > MAX_LEN or sorted_comments[i]['comment_score'] < MIN_SUBMISSION_SCORE:
                     continue
                 pairs_submission.append([sorted_comments[i], sorted_comments[i], 1.0]) 
 
