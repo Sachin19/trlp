@@ -33,17 +33,17 @@ parser.add_argument("--max_comments_per_submissions", default=5, type=int)
 
 args = parser.parse_args()
 
-protocol, submission_pattern = args.submissions_file_pattern.split("://")
-items = submission_pattern.split("/")
-bucket = items[0]
-prefix = "/".join(items[1:]).split("*")[0]
-print(protocol, bucket, prefix)
+# protocol, submission_pattern = args.submissions_file_pattern.split("://")
+# items = submission_pattern.split("/")
+# bucket = items[0]
+# prefix = "/".join(items[1:]).split("*")[0]
+# print(protocol, bucket, prefix)
 
-client=boto3.client(protocol)
-submission_objs = client.list_objects_v2(Bucket=bucket, Prefix=prefix)['Contents']
-# submissions_files = glob.glob(args.submissions_file_pattern)
-submission_files = [f"{protocol}://{bucket}/{obj['Key']}" for obj in submission_objs]
-# submission_files = glob.glob(args.submissions_file_pattern)
+# client=boto3.client(protocol)
+# submission_objs = client.list_objects_v2(Bucket=bucket, Prefix=prefix)['Contents']
+# # submissions_files = glob.glob(args.submissions_file_pattern)
+# submission_files = [f"{protocol}://{bucket}/{obj['Key']}" for obj in submission_objs]
+submission_files = glob.glob(args.submissions_file_pattern)
 
 protocol, comment_pattern = args.comments_file_pattern.split("://")
 items = comment_pattern.split("/")
@@ -62,7 +62,7 @@ print(len(submission_files), len(comments_files))
 ## convert to (post, commentA, commentB setup)
 comments_by_submission = {}
 
-submission_prefix = f"{args.experiment}__{args.submissions_tagger_name}__all_pass"
+submission_prefix = f"{args.experiment}__{args.submissions_tagger_name}__"
 comments_prefix = f"{args.experiment}__{args.comments_tagger_name}__"
 # print(comments_prefix)
 submission_prefix_len = len(submission_prefix)
@@ -76,7 +76,7 @@ for submissions_filename in submission_files:
             submissiondict = json.loads(submissiondoc)
             attributes = list(submissiondict['attributes'].keys())
             # print(attributes)
-            submissions_id2doc[submissiondict['id']] = attributes[0][submission_prefix_len:] #metadata
+            submissions_id2doc[submissiondict['id']] = attributes[1][submission_prefix_len:] #metadata
             total_submissions += 1
             if total_submissions % 1000 == 0:
                 print("\r")
