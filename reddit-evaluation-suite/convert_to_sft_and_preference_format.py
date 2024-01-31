@@ -83,7 +83,8 @@ for submissions_filename in submission_files:
                 print(f"{total_submissions/1000}K", end="", flush=True)
 
 total_comments = 0
-for comments_filename in comments_files:
+print(comments_files[:1])
+for comments_filename in comments_files[:1]:
     with smart_open.open(comments_filename) as fcomment:
         for commentdoc in fcomment:
             total_comments += 1
@@ -142,7 +143,7 @@ print(f"comments_by_submission size: {len(comments_by_submission)}")
 def get_ranked_list(paired_prefs, key):
     item2scores = defaultdict(int)
     key2items = {}
-    for item1, item2 in paired_prefs:
+    for item1, item2, _ in paired_prefs:
         item2scores[item1[key]] += 1
         if item1[key] not in key2items:
             key2items[item1[key]] = item1
