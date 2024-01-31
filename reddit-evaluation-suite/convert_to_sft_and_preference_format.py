@@ -159,6 +159,7 @@ posts_processed = 0
 data = []
 foutput_pref = open(args.output_pref_file, "w")
 foutput_sft = open(args.output_sft_file, "w")
+total_pairs_submission = 0
 for subreddit, thread in comments_by_submission.items():
     for post_id, post in thread.items():
         history = post['text']
@@ -166,8 +167,9 @@ for subreddit, thread in comments_by_submission.items():
         if posts_processed % 1000 == 0:
             print("\r")
             print(f"{posts_processed/1000}K", end="", flush=True)
-
-        sorted_comments = sorted(post['comments'], key=lambda x: x['comment_created_utc'])
+        unique_comment_ids = set([comment['comment_id'] for comment in post['comments']])
+        assert len(unique_comment_ids) == len(post['comments']), "shame!"
+        sorted_comments = sorted(p ost['comments'], key=lambda x: x['comment_created_utc'])
         pairs_submission = []
         special_pairs_submission = []
         for i in range(len(sorted_comments)):
@@ -242,7 +244,7 @@ for subreddit, thread in comments_by_submission.items():
         if len(pairs_submission) > MAX_NUM_PAIR_PER_SUBMISSION:
             #print(f"{len(pairs_submission)} pairs from one submission over predefined max ({MAX_NUM_PAIR_PER_SUBMISSION})")
             pairs_submission = sorted(pairs_submission, key=lambda x: x[-1], reverse=True)[:MAX_NUM_PAIR_PER_SUBMISSION]
-        
+        total_pairs_submission += len(pairs_submission)
         for comment_A, comment_B, overlap_ratio in pairs_submission:
             label = int(comment_A['comment_score'] > comment_B['comment_score'])
             score_ratio = comment_A['comment_score']/comment_B['comment_score'] if comment_A['comment_score'] > comment_B['comment_score'] else comment_B['comment_score']/comment_A['comment_score']
@@ -270,5 +272,7 @@ for subreddit, thread in comments_by_submission.items():
                     "len_ratio": len_ratio
                 }
             foutput_pref.write(json.dumps(line) + "\n")
+    
     # all_pairs += extend(pairs_submission)
 # print(f"{len(pairs)} pairs from {len(comments_by_submission)} submissions")
+print(f"{total_pairs_submission=}")
