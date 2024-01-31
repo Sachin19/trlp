@@ -83,8 +83,8 @@ for submissions_filename in submission_files:
                 print(f"{total_submissions/1000}K", end="", flush=True)
 
 total_comments = 0
-print(comments_files[:1])
-for comments_filename in comments_files[:1]:
+# print(comments_files[:1])
+for comments_filename in comments_files:
     with smart_open.open(comments_filename) as fcomment:
         for commentdoc in fcomment:
             total_comments += 1
