@@ -84,7 +84,7 @@ for submissions_filename in submission_files:
 
 total_comments = 0
 # print(comments_files[:1])
-for comments_filename in comments_files:
+for comments_filename in comments_files[:10]:
     with smart_open.open(comments_filename) as fcomment:
         for commentdoc in fcomment:
             total_comments += 1
@@ -139,12 +139,12 @@ for comments_filename in comments_files:
 
 print(f"comments_by_submission size: {len(comments_by_submission)}")
 
-#### convert to (post, commentA, commentB) for preferences
+## coonvert list of paired preferences to a ranked list
 def get_ranked_list(paired_prefs, key):
     item2scores = defaultdict(int)
     key2items = {}
-    for item1, item2, _ in paired_prefs:
-        item2scores[item1[key]] += 1
+    for item1, item2, _ in paired_prefs: #item2 is always preferred based on how this array is computed
+        item2scores[item2[key]] += 1
         if item1[key] not in key2items:
             key2items[item1[key]] = item1
         if item2[key] not in key2items:
@@ -160,6 +160,8 @@ data = []
 foutput_pref = open(args.output_pref_file, "w")
 foutput_sft = open(args.output_sft_file, "w")
 total_pairs_submission = 0
+
+#### convert to (post, commentA, commentB) for preferences
 for subreddit, thread in comments_by_submission.items():
     for post_id, post in thread.items():
         history = post['text']
