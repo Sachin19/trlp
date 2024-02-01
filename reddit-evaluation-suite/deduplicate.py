@@ -30,6 +30,8 @@ with open(args.input_file) as fin, open(args.output_file, "w") as fout:
             comment_B = items['human_ref_B']
 
         text = post+comment_A+comment_B
+        print(text, prev)
+        input()
         if text == prev:
             duplicates += 0
             continue
