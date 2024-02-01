@@ -3,6 +3,8 @@ import argparse
 import json 
 import re
 
+import difflib
+
 parser = argparse.ArgumentParser()
 parser.add_argument("--input_file", required=True)
 parser.add_argument("--output_file", required=True)
@@ -30,7 +32,10 @@ with open(args.input_file) as fin, open(args.output_file, "w") as fout:
             comment_B = items['human_ref_B']
 
         text = post+comment_A+comment_B
-        print(text, prev)
+        print(text, prev, text == prev)
+        input("ready?")
+        print(difflib.ndiff(text, prev))
+
         input()
         if text == prev:
             duplicates += 0
