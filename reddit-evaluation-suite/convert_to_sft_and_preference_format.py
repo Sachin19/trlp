@@ -69,6 +69,8 @@ submission_prefix_len = len(submission_prefix)
 comments_prefix_len = len(comments_prefix)
 submissions_id2doc = {}
 
+all_submission_attributes = set()
+all_subreddits = set()
 total_submissions = 0
 for submissions_filename in submission_files:
     with smart_open.open(submissions_filename) as fsubmission:
@@ -77,10 +79,15 @@ for submissions_filename in submission_files:
             attributes = list(submissiondict['attributes'].keys())
             # print(attributes)
             submissions_id2doc[submissiondict['id']] = attributes[1][submission_prefix_len:] #metadata
+            subdoc = eval(attributes[1][submission_prefix_len:])
+            all_submission_attributes.update(list(subdoc.keys()))
+
             total_submissions += 1
             if total_submissions % 1000 == 0:
                 print("\r")
                 print(f"{total_submissions/1000}K", end="", flush=True)
+
+print(all_submission_attributes)
 
 total_comments = 0
 # print(comments_files[:1])
@@ -138,6 +145,7 @@ for comments_filename in comments_files:
                 })
 
 print(f"comments_by_submission size: {len(comments_by_submission)}")
+print(f"subreddits: {comments_by_submission.keys()}")
 
 ## coonvert list of paired preferences to a ranked list
 def get_ranked_list(paired_prefs, key):
