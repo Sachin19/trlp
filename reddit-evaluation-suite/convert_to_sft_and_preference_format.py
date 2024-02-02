@@ -81,7 +81,7 @@ for submissions_filename in submission_files:
             submissions_id2doc[submissiondict['id']] = attributes[1][submission_prefix_len:] #metadata
             subdoc = eval(attributes[1][submission_prefix_len:])
             all_submission_attributes.update(list(subdoc.keys()))
-
+            all_subreddits.add(subdoc['subreddit'])
             total_submissions += 1
             if total_submissions % 1000 == 0:
                 print("\r")
@@ -102,7 +102,7 @@ for comments_filename in comments_files:
             # print(comment_id)
             commentdict = json.loads(commentdoc)
             attributes = list(commentdict['attributes'].keys())
-            print(attributes[1])
+            # print(attributes[1])
             # input()
             commentmetadata = eval(attributes[1][comments_prefix_len:]) #metadata
             commenttext = attributes[0][comments_prefix_len:] #text
