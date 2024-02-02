@@ -102,7 +102,7 @@ for comments_filename in comments_files:
             # print(comment_id)
             commentdict = json.loads(commentdoc)
             attributes = list(commentdict['attributes'].keys())
-            # print(attributes[1])
+            print(attributes[1])
             # input()
             commentmetadata = eval(attributes[1][comments_prefix_len:]) #metadata
             commenttext = attributes[0][comments_prefix_len:] #text
