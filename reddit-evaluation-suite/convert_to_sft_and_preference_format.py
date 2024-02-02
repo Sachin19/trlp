@@ -77,7 +77,7 @@ for submissions_filename in submission_files:
         for submissiondoc in fsubmission:
             submissiondict = json.loads(submissiondoc)
             attributes = list(submissiondict['attributes'].keys())
-            print(attributes)
+            #print(attributes)
             submissions_id2doc[submissiondict['id']] = attributes[1][submission_prefix_len:] #metadata
             subdoc = eval(attributes[1][submission_prefix_len:])
             all_submission_attributes.update(list(subdoc.keys()))
