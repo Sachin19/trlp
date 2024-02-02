@@ -88,6 +88,7 @@ for submissions_filename in submission_files:
                 print(f"{total_submissions/1000}K", end="", flush=True)
 
 print(all_submission_attributes)
+print(all_subreddits)
 
 total_comments = 0
 # print(comments_files[:1])
