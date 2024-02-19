@@ -15,6 +15,7 @@ from tqdm import tqdm
 
 from constants import *
 
+import gzip
 import boto3
 
 s3_client = boto3.client('s3')
@@ -84,8 +85,9 @@ for submissions_filename in submission_files:
             all_subreddits.add(subdoc['subreddit'])
             total_submissions += 1
             if total_submissions % 1000 == 0:
-                print("\r")
-                print(f"{total_submissions/1000}K", end="", flush=True)
+                print(f"{total_submissions/1000}K", end="\r", flush=True)
+                # print("\r")
+                # print(f"{total_submissions/1000}K", end="", flush=True)
 
 print(all_submission_attributes)
 print(all_subreddits)
@@ -97,8 +99,9 @@ for comments_filename in comments_files:
         for commentdoc in fcomment:
             total_comments += 1
             if total_comments % 1000 == 0:
-                print("\r")
-                print(f"{total_comments/1000}K", end="", flush=True)
+                print(f"{total_comments/1000}K", end="\r", flush=True)
+                # print("\r")
+                # print(f"{total_comments/1000}K", end="", flush=True)
 
             # print(comment_id)
             commentdict = json.loads(commentdoc)
@@ -166,8 +169,8 @@ def get_ranked_list(paired_prefs, key):
 
 posts_processed = 0
 data = []
-foutput_pref = open(args.output_pref_file, "w")
-foutput_sft = open(args.output_sft_file, "w")
+foutput_pref = gzip.open(args.output_pref_file, "wb")
+foutput_sft = gzip.open(args.output_sft_file, "wb")
 total_pairs_submission = 0
 
 #### convert to (post, commentA, commentB) for preferences
@@ -283,6 +286,7 @@ for subreddit, thread in comments_by_submission.items():
                     "len_ratio": len_ratio
                 }
             foutput_pref.write(json.dumps(line) + "\n")
+            
     
     # all_pairs += extend(pairs_submission)
 # print(f"{len(pairs)} pairs from {len(comments_by_submission)} submissions")
