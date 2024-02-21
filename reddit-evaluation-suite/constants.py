@@ -15,21 +15,21 @@ SCIENCESUBREDDITS2DESC = {}
 from collections import Counter
 
 for line in fscience:
-    SCIENCESUBREDDITS.append(line[0][3:])
-    SCIENCESUBREDDITS2DESC[line[0][3:]] = line[-1]
+    SCIENCESUBREDDITS.append(line[0].strip().split("/")[-1].lower())
+    SCIENCESUBREDDITS2DESC[line[0].strip().split("/")[-1].lower()] = line[-1]
 
     if line[3] == "Average" or line[3] == "High" or line[3] == "Very High":
-        SCIENCESUBREDDITS_AVERAGEACTIVITY.append(line[0][3:])
+        SCIENCESUBREDDITS_AVERAGEACTIVITY.append(line[0].strip().split("/")[-1].lower())
 
         if line[3] == "High" or line[3] == "Very High":
-            SCIENCESUBREDDITS_HIGHACTIVITY.append(line[0][3:])
+            SCIENCESUBREDDITS_HIGHACTIVITY.append(line[0].strip().split("/")[-1].lower())
     
     subcount = int(line[1])
     if subcount >= 100:
-        SCIENCESUBREDDITS_HIGHSUBSCRIBER.append(line[0][3:])
+        SCIENCESUBREDDITS_HIGHSUBSCRIBER.append(line[0].strip().split("/")[-1].lower())
 
         if subcount >= 500:
-            SCIENCESUBREDDITS_VERYHIGHSUBSCRIBER.append(line[0][3:])
+            SCIENCESUBREDDITS_VERYHIGHSUBSCRIBER.append(line[0].strip().split("/")[-1].lower())
     
 # counter = Counter(SCIENCESUBREDDITS)
 # print([k for k, v in counter.items() if v > 1])
