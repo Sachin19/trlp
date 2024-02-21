@@ -72,5 +72,21 @@ class HistorySubredditSubmissionsTagger(BaseTagger):
 
         return DocResult(doc=doc, spans=spans)
 
+FINANCESUBREDDITS = get_subreddits("finance")
+@add_tagger("finance_subreddit_submissions")
+class FinanceSubredditSubmissionsTagger(BaseTagger):
+    def predict(self, doc: Document) -> DocResult:
+        spans = get_spans(doc, FINANCESUBREDDITS)
+
+        return DocResult(doc=doc, spans=spans)
+
+SCIENCESUBREDDITS = get_subreddits("science")
+@add_tagger("science_subreddit_submissions")
+class ScienceSubredditSubmissionsTagger(BaseTagger):
+    def predict(self, doc: Document) -> DocResult:
+        spans = get_spans(doc, SCIENCESUBREDDITS)
+
+        return DocResult(doc=doc, spans=spans)
+
 
     

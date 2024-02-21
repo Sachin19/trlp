@@ -6,7 +6,9 @@ SUBSCRIBER_VERYHIGHTHRESHOLD = 500
 
 factor2filename = {
     "gender": "redditlists/gendersubreddits.tsv",
-    "history": "redditlists/historysubreddits.tsv"
+    "history": "redditlists/historysubreddits.tsv",
+    "finance": "redditlists/financesubreddits.tsv",
+    "science": "redditlists/sciencesubreddits.tsv"
 }
 
 def get_subreddits(factor):
