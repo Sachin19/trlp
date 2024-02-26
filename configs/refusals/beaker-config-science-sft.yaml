@@ -1,0 +1,30 @@
+version: v2
+description: SFT-refusals-{{.Env.model_name}}
+budget: ai2/allennlp
+tasks:
+  # We only have one step in our experiment, so there's only one entry in this list
+  - name: training
+    image:
+      # You will want to replace `username` below with your Beaker username
+      beaker: sachink/community-lm
+    command: [bash, /code/examples/refusals/scripts/sft_refusals.sh, {{.Env.model_name}}]
+    envVars:
+    - name: WANDB_API_KEY
+      value: "<add_your_key>"
+    datasets:
+    - mountPath: /code/
+      source:
+        hostPath: <add_path_to_trlp>
+    - mountPath: /datasets/
+      source:
+        beaker: {{.Env.beaker_data_name}} # i hosted my dataset here, but can replace with local data also
+    result:
+      # Beaker will capture anything that's written to this location and store it in the results
+      # dataset. This location is required to be a directory, not a file.
+      path: /models/
+    resources:
+      gpuCount: 1
+    context:
+      priority: normal
+    constraints:
+      cluster: [ ai2/allennlp-cirrascale ]
