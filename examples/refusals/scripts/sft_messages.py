@@ -97,9 +97,19 @@ def print_trainable_parameters(model):
 
 def preprocess_function(example):
     """Prepare the text from a sample of the dataset."""
-    prompt = example['prompt']
-    response = example['response']
-    text = f"<|user|>\n{prompt}\n<|assistant|>\n{response}{tokenizer.eos_token}"
+    text = ""
+    for message in example['messages']:
+        if message["role"] == "system":
+            text += "<|system|>\n" + message["content"] + "\n"
+        elif message["role"] == "user":
+            text += "<|user|>\n" + message["content"] + "\n"
+        elif message["role"] == "assistant":
+            text += "<|assistant|>\n" + message["content"].strip() + tokenizer.eos_token + "\n"
+        else:
+            raise ValueError(
+                "Tulu chat template only supports 'system', 'user' and 'assistant' roles. Invalid role: {}.".format(message["role"])
+                )
+    # text += f"{tokenizer.eos_token}"
 
     return text
 
@@ -120,7 +130,7 @@ def chars_token_ratio(dataset, tokenizer, nb_examples=400):
     return total_characters / (total_tokens+1e-6)
 
 
-def create_datasets_from_jsonl(tokenizer, args, load_only=["prompt", "response"]):
+def create_datasets_from_jsonl(tokenizer, args, load_only=["messages"]):
     if getattr(tokenizer, "pad_token", None) is None:
         tokenizer.pad_token = tokenizer.eos_token
     

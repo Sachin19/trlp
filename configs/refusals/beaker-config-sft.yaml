@@ -1,0 +1,39 @@
+version: v2
+description: SFT-refusals-{{.Env.model_name}}-epoch{{.Env.epochs}}
+budget: ai2/allennlp
+tasks:
+  # We only have one step in our experiment, so there's only one entry in this list
+  - name: training
+    image:
+      # You will want to replace `username` below with your Beaker username
+      beaker: sachink/community-lm
+    command: [bash, /code/examples/refusals/scripts/sft_refusals.sh, {{.Env.model_name}}, {{.Env.epochs}}]
+    envVars:
+    - name: WANDB_API_KEY
+      value: "042a71982d40818da3dcc85602c97acd6c723ae4"
+    datasets:
+    - mountPath: /code/
+      source:
+        hostPath: /net/nfs.cirrascale/allennlp/sachink/community-lm/trlp
+    - mountPath: /datasets/
+      source:
+        beaker: {{.Env.data_path}} # i hosted my dataset here, but can replace with local data also
+    - mountPath: /tulu-7b-uncensored/
+      source:
+        beaker: 01HGK8CGNWNPSW145HW7EYK3DM
+    - mountPath: /yizhong-tulu2-7b/
+      source:
+        beaker: Yizhongw03/tulu_v2_7B_qlora
+    - mountPath: /yizhong-llama2-7b/
+      source:
+        beaker: Yizhongw03/hf_llama2_model_7B
+    result:
+      # Beaker will capture anything that's written to this location and store it in the results
+      # dataset. This location is required to be a directory, not a file.
+      path: /models/
+    resources:
+      gpuCount: 1
+    context:
+      priority: normal
+    constraints:
+      cluster: [ ai2/allennlp-cirrascale ]

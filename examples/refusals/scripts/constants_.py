@@ -1,0 +1,2 @@
+TOKEN = "<your huggingface token>"
+
