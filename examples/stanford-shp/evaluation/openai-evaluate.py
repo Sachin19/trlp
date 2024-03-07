@@ -13,10 +13,10 @@ from transformers import AutoTokenizer
 
 segmenter = pysbd.Segmenter(language="en", clean=False)
 
-from huggingface_hub.commands.user import login; login(token="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")
-print("loggedin!")
+# from huggingface_hub.commands.user import login; login(token="access_token")
+# print("loggedin!")
 
-llama_tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-2-7b-hf")
+# llama_tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-2-7b-hf")
 
 system_instruction="You are a highly efficient assistant, who evaluates and selects the best large language model (LLMs) based on the quality of their responses to a given instruction. This process will be used to create a leaderboard reflecting the most accurate and human-preferred answers."
 full_instruction="""I require a leaderboard for various Reddit comment generator models. I'll provide you with posts selected from Reddit given to these models and their corresponding outputs. Your task is to assess these responses, and select the model that produces the output that will be upvoted more in the subreddit it was asked in.
