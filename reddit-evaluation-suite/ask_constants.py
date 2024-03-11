@@ -8,8 +8,10 @@ factor2filename = {
     "gender": "redditlists/gendersubreddits.tsv",
     "history": "redditlists/historysubreddits.tsv",
     "finance": "redditlists/financesubreddits.tsv",
-    "science": "redditlists/sciencesubreddits.tsv"
+    "science": "redditlists/sciencesubreddits.tsv",
+    "politics": "redditlists/politicssubreddits.tsv"
 }
+
 
 def get_subreddits(factor):
     filename = factor2filename[factor]
