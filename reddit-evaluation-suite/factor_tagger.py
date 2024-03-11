@@ -88,5 +88,13 @@ class ScienceSubredditSubmissionsTagger(BaseTagger):
 
         return DocResult(doc=doc, spans=spans)
 
+POLITICSSUBREDDITS = get_subreddits("politics")
+@add_tagger("politics_subreddit_submissions")
+class PoliticsSubredditSubmissionsTagger(BaseTagger):
+    def predict(self, doc: Document) -> DocResult:
+        spans = get_spans(doc, POLITICSSUBREDDITS)
+
+        return DocResult(doc=doc, spans=spans)
+
 
     
