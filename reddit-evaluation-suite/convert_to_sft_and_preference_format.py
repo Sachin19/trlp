@@ -94,7 +94,7 @@ print(all_subreddits)
 
 total_comments = 0
 # print(comments_files[:1])
-for comments_filename in tqdm(comments_files):
+for comments_filename in tqdm(comments_files)g:
     with smart_open.open(comments_filename) as fcomment:
         for commentdoc in fcomment:
             total_comments += 1
@@ -249,7 +249,7 @@ for subreddit, thread in comments_by_submission.items():
                     "only_comment": True,
                     "domain": subreddit,
                     "post_id": post_id,
-                    "title", title,
+                    "title": title,
                     "history": history,
                     "c_root_id": comment['comment_id'], 
                     "created_at_utc": comment['comment_created_utc'],
@@ -274,7 +274,7 @@ for subreddit, thread in comments_by_submission.items():
                     "domain": subreddit,
                     "post_id": post_id,
                     "history": history,
-                    "title", title,
+                    "title": title,
                     "c_root_id_A": comment_A['comment_id'], 
                     "c_root_id_B": comment_B['comment_id'],
                     "created_at_utc_A": comment_A['comment_created_utc'],
