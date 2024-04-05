@@ -98,8 +98,8 @@ for comments_filename in comments_files:
     with smart_open.open(comments_filename) as fcomment:
         for commentdoc in fcomment:
             total_comments += 1
-            if total_comments % 1000 == 0:
-                print(f"{total_comments/1000}K", end="\r", flush=True)
+            if total_comments % 10000 == 0:
+                print(f"{total_comments/10000}0K", end="\r")
                 # print("\r")
                 # print(f"{total_comments/1000}K", end="", flush=True)
 
@@ -176,6 +176,7 @@ total_pairs_submission = 0
 #### convert to (post, commentA, commentB) for preferences
 for subreddit, thread in comments_by_submission.items():
     for post_id, post in thread.items():
+        title = post['title']
         history = post['text']
         posts_processed += 1
         if posts_processed % 1000 == 0:
@@ -233,6 +234,7 @@ for subreddit, thread in comments_by_submission.items():
                     "only_comment": False,
                     "domain": subreddit,
                     "post_id": post_id,
+                    "title": title,
                     "history": history,
                     "c_root_id": comment['comment_id'], 
                     "created_at_utc": comment['comment_created_utc'],
@@ -247,6 +249,7 @@ for subreddit, thread in comments_by_submission.items():
                     "only_comment": True,
                     "domain": subreddit,
                     "post_id": post_id,
+                    "title", title,
                     "history": history,
                     "c_root_id": comment['comment_id'], 
                     "created_at_utc": comment['comment_created_utc'],
@@ -271,6 +274,7 @@ for subreddit, thread in comments_by_submission.items():
                     "domain": subreddit,
                     "post_id": post_id,
                     "history": history,
+                    "title", title,
                     "c_root_id_A": comment_A['comment_id'], 
                     "c_root_id_B": comment_B['comment_id'],
                     "created_at_utc_A": comment_A['comment_created_utc'],
@@ -286,7 +290,7 @@ for subreddit, thread in comments_by_submission.items():
                     "len_ratio": len_ratio
                 }
             foutput_pref.write(json.dumps(line) + "\n")
-            
+
     
     # all_pairs += extend(pairs_submission)
 # print(f"{len(pairs)} pairs from {len(comments_by_submission)} submissions")
