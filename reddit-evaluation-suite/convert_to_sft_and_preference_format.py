@@ -34,17 +34,17 @@ parser.add_argument("--max_comments_per_submissions", default=5, type=int)
 
 args = parser.parse_args()
 
-# protocol, submission_pattern = args.submissions_file_pattern.split("://")
-# items = submission_pattern.split("/")
-# bucket = items[0]
-# prefix = "/".join(items[1:]).split("*")[0]
-# print(protocol, bucket, prefix)
+protocol, submission_pattern = args.submissions_file_pattern.split("://")
+items = submission_pattern.split("/")
+bucket = items[0]
+prefix = "/".join(items[1:]).split("*")[0]
+print(protocol, bucket, prefix)
 
-# client=boto3.client(protocol)
-# submission_objs = client.list_objects_v2(Bucket=bucket, Prefix=prefix)['Contents']
-# # submissions_files = glob.glob(args.submissions_file_pattern)
-# submission_files = [f"{protocol}://{bucket}/{obj['Key']}" for obj in submission_objs]
-submission_files = glob.glob(args.submissions_file_pattern)
+client=boto3.client(protocol)
+submission_objs = client.list_objects_v2(Bucket=bucket, Prefix=prefix)['Contents']
+# submissions_files = glob.glob(args.submissions_file_pattern)
+submission_files = [f"{protocol}://{bucket}/{obj['Key']}" for obj in submission_objs]
+# submission_files = glob.glob(args.submissions_file_pattern)
 
 protocol, comment_pattern = args.comments_file_pattern.split("://")
 items = comment_pattern.split("/")
@@ -94,7 +94,7 @@ print(all_subreddits)
 
 total_comments = 0
 # print(comments_files[:1])
-for comments_filename in comments_files:
+for comments_filename in tqdm(comments_files):
     with smart_open.open(comments_filename) as fcomment:
         for commentdoc in fcomment:
             total_comments += 1
@@ -169,8 +169,8 @@ def get_ranked_list(paired_prefs, key):
 
 posts_processed = 0
 data = []
-foutput_pref = gzip.open(args.output_pref_file, "wb")
-foutput_sft = gzip.open(args.output_sft_file, "wb")
+foutput_pref = gzip.open(args.output_pref_file, "wt")
+foutput_sft = gzip.open(args.output_sft_file, "wt")
 total_pairs_submission = 0
 
 #### convert to (post, commentA, commentB) for preferences
