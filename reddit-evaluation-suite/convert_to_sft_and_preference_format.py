@@ -9,7 +9,7 @@ from collections import defaultdict
 import smart_open
 
 import spacy
-nlp = spacy.load("en_core_web_sm", exclude=["ner", "tok2vec"] )
+nlp = spacy.load("en_core_web_sm", exclude=["tok2vec", "tagger", "parser", "ner", "attribute_ruler"])
 
 from tqdm import tqdm
 
@@ -94,7 +94,7 @@ print(all_subreddits)
 
 total_comments = 0
 # print(comments_files[:1])
-for comments_filename in tqdm(comments_files)g:
+for comments_filename in tqdm(comments_files):
     with smart_open.open(comments_filename) as fcomment:
         for commentdoc in fcomment:
             total_comments += 1
@@ -138,13 +138,14 @@ for comments_filename in tqdm(comments_files)g:
             doc = nlp(commenttext.replace("\n", " "))
             tokens = [token.lemma_ for token in doc if not token.is_stop and not token.pos_ in ['SYM', 'PUNCT', 'AUX']]
             tokens = [t for t in tokens if t.strip() != ""]
+            # tokens = [t for t in commenttext.split() if t.strip() != ""]
             
             comments_by_submission[subreddit][submission_id]['comments'].append({
                     'comment_id': comment_id, 
                     'comment_text': commenttext, 
                     'comment_created_utc': comment_time,
                     "comment_score": commentscore,
-                    "comment_unigram": set(tokens),
+                    "comment_unigram": str(set(tokens)),
                     "comment_num_sentences": len(list(doc.sents))
                 })
 
@@ -208,7 +209,7 @@ for subreddit, thread in comments_by_submission.items():
                 if max(first_len, second_len) > MAX_LEN:
                     continue
                 
-                first_unigram, second_unigram = sorted_comments[i]['comment_unigram'], sorted_comments[j]['comment_unigram']
+                first_unigram, second_unigram = eval(sorted_comments[i]['comment_unigram']), eval(sorted_comments[j]['comment_unigram'])
                 word_overlap = len(first_unigram.intersection(second_unigram))
                 if word_overlap < MIN_WORD_OVERLAP:
                     continue
