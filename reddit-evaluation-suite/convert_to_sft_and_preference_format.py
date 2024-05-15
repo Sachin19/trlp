@@ -9,7 +9,8 @@ from collections import defaultdict
 import smart_open
 
 import spacy
-nlp = spacy.load("en_core_web_sm", exclude=["tok2vec", "tagger", "parser", "ner", "attribute_ruler"])
+nlp = spacy.load("en_core_web_sm", exclude=["tok2vec", "ner"])
+nlp.add_pipe("sentencizer")
 
 from tqdm import tqdm
 
